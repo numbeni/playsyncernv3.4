@@ -36,7 +36,8 @@ export const accountsTable = pgTable(
     accountCode: text("account_code").notNull().unique(),
 
     // Display number components. Stored separately to allow safe prefix changes.
-    // displayNumber = "#" + accountNumberPrefix + "-" + padded(accountNumberSeq)
+    // Approved per-game display format: GOW-001 (no leading #).
+    // displayNumber = accountNumberPrefix + "-" + padded(accountNumberSeq)
     accountNumberPrefix: text("account_number_prefix").notNull(),
     accountNumberSeq: integer("account_number_seq").notNull(),
     displayNumber: text("display_number").notNull(),

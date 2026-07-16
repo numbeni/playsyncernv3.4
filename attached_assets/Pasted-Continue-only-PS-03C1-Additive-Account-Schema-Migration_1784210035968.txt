@@ -1,0 +1,262 @@
+Continue only:
+
+PS-03C1 — Additive Account Schema Migration Correction and Evidence
+
+Do not start Backend Account CRUD, OpenAPI, generated clients, frontend integration, Secret Reveal, Customer Assignment, or any later stage.
+
+The current source contains:
+
+lib/db/migrations/0002_warm_swarm.sql
+
+Expected repository SHA-256:
+
+99f124e4bb93a8763d485813a65355c44e4a0aa4a1a6b4eb8ddffc47e3059b6a
+
+Before changing anything, perform a strictly read-only live preflight.
+
+## 1. Determine the live 0002 migration state
+
+Inside an explicit read-only transaction, inspect:
+
+drizzle.__drizzle_migrations
+
+Report only:
+
+- whether migration 0002 is applied
+- its applied hash
+- its applied timestamp
+- current row counts for:
+  - games
+  - accounts
+  - account_backup_codes
+  - account_capacities
+  - capacity_customers
+  - orders
+  - game_account_sequences, if the table exists
+
+Do not expose DATABASE_URL or credentials.
+
+Rules:
+
+- If 0002 is already applied and its hash exactly matches
+  99f124e4bb93a8763d485813a65355c44e4a0aa4a1a6b4eb8ddffc47e3059b6a
+  do not reapply it and do not modify 0002_warm_swarm.sql.
+
+- If 0002 is not applied, do not apply it until all isolated tests and rollback tests pass.
+
+- If 0002 is applied with a different hash, stop immediately and report a migration-integrity blocker.
+
+- Do not edit migrations 0000 or 0001.
+
+## 2. Fix the migration test SQL parameter bug
+
+In:
+
+lib/db/src/migrations/ps03c1.test.ts
+
+The current INSERT helpers generate:
+
+VALUES (1, 2, 3)
+
+instead of PostgreSQL placeholders:
+
+VALUES ($1, $2, $3)
+
+Correct all affected helpers:
+
+- insertAccount
+- insertCapacity
+- insertBackupCode
+
+Use parameterized placeholders equivalent to:
+
+values.map((_, i) => `$${i + 1}`)
+
+Do not interpolate test values directly into SQL.
+
+## 3. Correct display-number examples in PS-03C1 files
+
+The approved per-game display format is:
+
+GOW-001
+
+not:
+
+#GOW-001
+
+Correct only PS-03C1 schema comments and migration tests that use the leading #.
+
+Do not modify the existing runtime account-number helper in this stage.
+
+Record the legacy helper format as a Stage B Runtime Cutover blocker.
+
+## 4. Harden disposable database safety
+
+Do not unconditionally drop a fixed database name on the active PostgreSQL server.
+
+Use one of these safe approaches:
+
+- an explicitly configured PS03C1_TEST_DATABASE_URL pointing to a disposable database
+- or a uniquely generated disposable database name with a PS03C1-specific random suffix
+
+Add safety checks proving:
+
+- the disposable database is not the active workspace database
+- its name matches the expected PS03C1 test naming pattern
+- only that disposable database may be dropped
+- cleanup runs after tests
+
+Do not insert synthetic data into the active workspace database.
+
+## 5. Add real concurrency tests
+
+The per-game counter test must use at least two separate PostgreSQL connections running concurrent allocation attempts.
+
+Verify:
+
+- both calls succeed
+- they return different sequential values
+- no duplicate number is returned
+- the final counter value is correct
+
+Also test:
+
+- different Games have independent counters
+- deleting an Account does not reset or reuse its sequence number
+- a rolled-back transaction does not cause a previously issued global sequence value to be reused
+
+## 6. Create and test an explicit rollback plan
+
+Create:
+
+reports/ps03c1_rollback.sql
+
+The rollback must remove only objects introduced by 0002, in safe reverse dependency order, including:
+
+- identifier trigger
+- identifier trigger function
+- new indexes
+- new unique/check constraints
+- new columns
+- game_account_sequences
+- account_code_seq
+- new enums
+
+Do not remove or modify legacy objects created by 0000 or 0001.
+
+Test the rollback only on the isolated disposable database.
+
+Required rollback validation:
+
+1. Apply 0000
+2. Apply 0001
+3. Capture the post-0001 schema
+4. Apply 0002
+5. Run PS-03C1 tests
+6. Execute the rollback plan
+7. Compare the resulting schema with the captured post-0001 schema
+8. Confirm no Games or legacy Account object was changed
+
+Do not execute rollback on the active Replit database.
+
+## 7. Run required checks
+
+Run and report complete sanitized outputs for:
+
+- pnpm run typecheck
+- pnpm --filter @workspace/db run db:check
+- pnpm --filter @workspace/db run test
+- pnpm --filter @workspace/db run test:migrations
+- clean disposable migration 0000 → 0001 → 0002
+- disposable rollback verification
+
+Do not claim PASS unless the actual command exits successfully.
+
+## 8. Apply or verify live migration
+
+If 0002 was not already applied:
+
+- reconfirm migrations 0000 and 0001 hashes
+- reconfirm all Account-related live tables are empty
+- apply only 0002 through the repository migration runner
+- do not use drizzle-kit push
+- do not insert test data into the live database
+
+If 0002 was already applied with the exact expected hash:
+
+- do not reapply it
+- perform only post-migration read-only verification
+
+## 9. Live post-migration verification
+
+Inside:
+
+BEGIN TRANSACTION READ ONLY;
+
+Confirm:
+
+- transaction_read_only = on
+- migration 0002 exists exactly once
+- its applied hash matches the repository file
+- migrations 0000 and 0001 retain their original hashes
+- all new PS-03C1 schema objects exist
+- all Account-related tables remain empty
+- game_account_sequences remains empty
+- capacity_customers remains unchanged
+- no runtime table contains synthetic data
+
+Finish with:
+
+ROLLBACK;
+
+## 10. Remove or explain unrelated changes
+
+Inspect the exact Git diff.
+
+The `.replit` file contains unrelated port mapping changes.
+
+If those port changes were introduced during PS-03C1, revert them.
+
+If they existed before PS-03C1, provide Git evidence and leave them unchanged.
+
+Do not modify documentation during this correction.
+
+Do not modify:
+
+- artifacts/api-server
+- artifacts/playsyncer
+- lib/api-spec
+- lib/api-client-react
+- lib/api-zod
+- capacity_customers schema
+
+## 11. Required persistent artifacts
+
+Create:
+
+reports/ps03c1_implementation_report.md
+reports/ps03c1_rollback.sql
+reports/ps03c1_complete.diff
+
+The implementation report must include:
+
+- exact changed file list
+- migration 0002 SHA-256
+- confirmation 0000 and 0001 were not modified
+- exact test commands and outputs
+- isolated database evidence
+- rollback evidence
+- live migration state
+- live post-migration row counts
+- explanation of any unrelated pre-existing dirty files
+- confirmation of no runtime source changes
+
+Do not truncate the report.
+
+Final status must remain:
+
+PS-03C1 — IMPLEMENTED, AWAITING COMMAND CENTER REVIEW
+
+Do not approve or close PS-03C1 automatically.
+
+Stop after returning the complete persistent evidence artifacts.
