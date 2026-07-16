@@ -13,6 +13,7 @@
     "db:migrate": "drizzle-kit migrate --config ./drizzle.config.ts",
     "db:check": "drizzle-kit check --config ./drizzle.config.ts",
     "test": "node --test src/helpers/*.test.ts",
+    "test:migrations": "node --test --test-concurrency=1 src/migrations/*.test.ts",
     "push": "drizzle-kit push --config ./drizzle.config.ts",
     "push-force": "drizzle-kit push --force --config ./drizzle.config.ts"
   },

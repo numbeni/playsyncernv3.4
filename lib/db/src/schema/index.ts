@@ -4,6 +4,7 @@ export * from "./games";
 export * from "./accounts";
 export * from "./account-backup-codes";
 export * from "./account-capacities";
+export * from "./game-account-sequences";
 export * from "./orders";
 export * from "./capacity-customers";
 export * from "./audit-logs";

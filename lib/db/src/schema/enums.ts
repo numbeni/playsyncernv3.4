@@ -13,10 +13,21 @@ export const accountStatusEnum = pgEnum("account_status", [
   "disabled",
 ]);
 
+export const accountStatusOverrideEnum = pgEnum("account_status_override", [
+  "SOLD",
+  "INACTIVE",
+]);
+
 export const capacityKindEnum = pgEnum("capacity_kind", [
   "Z2_PS5",
   "Z2_PS4",
   "Z3_PS5",
+]);
+
+export const capacityKindV2Enum = pgEnum("capacity_kind_v2", [
+  "Z2_PS5",
+  "Z2_PS4",
+  "Z3_SHARED_PS5_PS4",
 ]);
 
 export const capacityPlatformEnum = pgEnum("capacity_platform", ["PS4", "PS5"]);
@@ -39,6 +50,12 @@ export const capacityCustomerStatusEnum = pgEnum("capacity_customer_status", [
   "active",
   "removed",
   "cancelled",
+]);
+
+export const backupCodeStatusEnum = pgEnum("backup_code_status", [
+  "AVAILABLE",
+  "USED",
+  "REVOKED",
 ]);
 
 export const adminStatusEnum = pgEnum("admin_status", ["active", "inactive"]);

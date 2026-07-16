@@ -1,0 +1,670 @@
+You are executing only:
+
+PS-03C1 — Additive Account Schema Migration
+
+PS-03C0 has been APPROVED AND CLOSED.
+
+Verified live database state:
+
+- migrations 0000 and 0001 are applied
+- both migrations match the exact repository SHA-256 hashes
+- games, accounts, account_backup_codes, account_capacities, capacity_customers and orders all contain 0 rows
+- no data migration or backfill blocker exists
+- Runtime Account writes remain unauthorized
+
+This stage authorizes only an additive Account Core schema migration.
+
+Do not start any later PS-03 work.
+
+---
+
+# Mandatory operating rules
+
+Before changing files:
+
+1. Inspect:
+   - AGENTS.md
+   - docs/CURRENT_PHASE.md
+   - docs/PRODUCT_RULES.md
+   - docs/MIGRATIONS.md
+   - docs/DECISION_LOG.md
+   - current Drizzle schemas
+   - migration files 0000 and 0001
+   - Drizzle migration journal and snapshots
+   - package scripts and existing database tests
+
+2. Confirm the current Git working tree state.
+
+3. Calculate and record SHA-256 hashes for:
+
+   lib/db/migrations/0000_zippy_leech.sql
+   lib/db/migrations/0001_glossy_onslaught.sql
+
+4. Do not edit either existing migration.
+
+If any existing migration, migration hash, live schema, or row-count evidence differs from the approved PS-03C0 baseline, stop before implementation and report the blocker.
+
+---
+
+# Strict scope
+
+Allowed work:
+
+- create one new sequential versioned migration after 0001
+- update Account-related Drizzle schema files
+- add Account Core schema helpers required by this migration
+- update Drizzle migration metadata and snapshots through the approved migration workflow
+- add or update migration-focused database tests
+- create sanitized implementation and evidence reports
+
+Forbidden work:
+
+- Backend Account CRUD
+- Account routes or services
+- OpenAPI changes
+- generated API or Zod clients
+- frontend integration
+- Account Workspace changes
+- Secret Reveal
+- Authentication or RBAC implementation
+- Audit Logging implementation
+- Customer Assignment implementation
+- modifying or extending capacity_customers
+- Customer Phone migration
+- runtime API changes
+- runtime frontend changes
+- documentation changes
+- dependency additions
+- drizzle-kit push
+- synthetic records in the live database
+- editing migration 0000 or 0001
+- deleting legacy columns or legacy enum values
+- broad refactoring
+
+No files under these runtime areas may be modified:
+
+- artifacts/api-server
+- artifacts/playsyncer
+- lib/api-spec
+- lib/api-client-react
+- lib/api-zod
+
+Customer Assignment remains outside Account Core.
+
+---
+
+# Authoritative Account rules
+
+## Account identifiers
+
+Each Account has:
+
+1. A global immutable code:
+
+   ACC-000001
+
+2. A per-game immutable display identifier:
+
+   GOW-001
+
+Both identifiers must:
+
+- be allocated once
+- never be changed
+- never be reused, including after deletion
+- use concurrency-safe allocation
+- never use MAX + 1
+
+Do not replace the approved formats with UUIDs or random public identifiers.
+
+## Effective Account status
+
+The effective statuses are:
+
+- AVAILABLE
+- PARTIALLY_SOLD
+- SOLD
+- INACTIVE
+
+Persisted manual override values are only:
+
+- SOLD
+- INACTIVE
+- NULL
+
+AVAILABLE and PARTIALLY_SOLD must not be persisted as manual override values.
+
+Priority and derivation:
+
+1. Manual INACTIVE override → INACTIVE
+2. Manual SOLD override → SOLD
+3. All Capacities FINISHED → SOLD automatically
+4. All Capacities AVAILABLE → AVAILABLE
+5. Any other mixture containing ASSIGNED or FINISHED → PARTIALLY_SOLD
+
+If automatic SOLD was caused only by every Capacity being FINISHED and one Capacity later leaves FINISHED, the effective Account status must be recalculated.
+
+FINISHED is a Capacity state, not an Account status.
+
+No runtime calculation is implemented in PS-03C1. This stage only creates the required schema foundation.
+
+---
+
+# Required additive schema foundation
+
+Use clear, unambiguous naming consistent with the repository.
+
+Do not reuse legacy columns whose names imply encryption but whose existing write paths stored plaintext.
+
+All new sensitive-value and lookup-hash columns must remain nullable during this additive foundation stage. Required-value enforcement belongs to the later runtime-cutover stage.
+
+## 1. Account manual override
+
+Create a new enum or equivalent constrained type containing only:
+
+- SOLD
+- INACTIVE
+
+Add a nullable manual override column to accounts.
+
+Requirements:
+
+- NULL means there is no manual override
+- AVAILABLE and PARTIALLY_SOLD must not be valid stored override values
+- keep the legacy accounts.status column unchanged during PS-03C1
+- do not remove or modify the old account_status enum
+
+## 2. Account encrypted-value and lookup-hash columns
+
+Add new, clearly versioned or otherwise unmistakable fields for:
+
+### PSN Email
+- encrypted/ciphertext value
+- keyed lookup hash
+
+### PSN Password
+- encrypted/ciphertext value
+- keyed lookup hash
+
+### Email Password
+- encrypted/ciphertext value
+- keyed lookup hash
+
+### Family Management Email
+- encrypted/ciphertext value
+- keyed lookup hash
+
+Requirements:
+
+- encrypted values and lookup hashes are separate columns
+- no new searchable plaintext credential columns
+- lookup-hash columns must support exact-match search
+- lookup-hash indexes must be non-unique for duplicate-permitted fields
+- do not populate or backfill these columns in this stage
+- do not alter existing runtime write paths
+
+Do not add partial-search indexes, trigram indexes, plaintext-normalized search columns, or ordinary unhashed search fields.
+
+Partial search over encrypted Email or Family Management Email remains deferred.
+
+## 3. Online ID duplicate-detection foundation
+
+Duplicate Online IDs remain permitted.
+
+Add only the minimal normalized/indexed structure needed for future exact duplicate detection, if the existing schema does not already provide it safely.
+
+Requirements:
+
+- the index must be non-unique
+- do not block duplicate Online IDs
+- do not introduce partial-search infrastructure
+- do not introduce encryption unless already required by an approved decision
+
+## 4. Backup Code lifecycle
+
+Keep the legacy Backup Code columns temporarily.
+
+Add new schema fields for:
+
+- encrypted/ciphertext Backup Code value
+- separate keyed lookup hash
+- lifecycle status
+
+Create a new lifecycle enum containing:
+
+- AVAILABLE
+- USED
+- REVOKED
+
+Requirements:
+
+- the lookup-hash index must be non-unique unless a separately approved uniqueness rule exists
+- do not return or reveal Backup Codes
+- do not add API behavior
+- do not enforce “at least one Backup Code” through unsafe cross-table database logic
+
+The requirement that every new Account must have at least one Backup Code will later be enforced transactionally by Account Core service logic.
+
+## 5. Capacity FINISHED state
+
+Add additive Capacity fields capable of representing a manual, persisted and reversible FINISHED state.
+
+At minimum include:
+
+- a persisted finished indicator or approved equivalent
+- finished_at timestamp
+
+Add an appropriate check constraint so the persisted indicator and timestamp cannot contradict each other.
+
+Examples of valid consistency:
+
+- not finished → finished_at is NULL
+- finished → finished_at is NOT NULL
+
+Do not add actor or permission fields that depend on Authentication or Audit infrastructure not yet implemented.
+
+Do not implement Capacity operations.
+
+## 6. Shared Z3 representation
+
+The legacy value:
+
+Z3_PS5
+
+does not represent the approved shared Capacity.
+
+Introduce an additive versioned Capacity-kind representation containing:
+
+- Z2_PS5
+- Z2_PS4
+- Z3_SHARED_PS5_PS4
+
+Requirements:
+
+- do not remove Z3_PS5 in this stage
+- do not rewrite the existing capacity_kind column destructively
+- add a new nullable versioned Capacity-kind column or an equivalently rollback-friendly additive representation
+- add the future unique-slot constraint/index for the new representation where safe
+- no Capacity rows exist, so no backfill is required
+- do not create Account or Capacity data
+
+The future runtime template must eventually create Shared Z3 for PS4_ONLY Accounts, but template runtime logic is outside PS-03C1.
+
+## 7. Identifier allocation foundation
+
+Add schema-level structures for:
+
+### Global Account code allocation
+
+The structure must support sequential codes such as:
+
+ACC-000001
+
+Use a PostgreSQL sequence or another concurrency-safe, non-reusing database allocator.
+
+Requirements:
+
+- never use MAX + 1
+- no cycle
+- no automatic identifier reuse
+- public formatting remains ACC- plus a padded sequence
+- do not implement runtime formatting or Account creation
+
+### Per-game Account sequence
+
+Add a dedicated per-game counter table or equivalent concurrency-safe structure.
+
+The design must support atomic allocation using a pattern equivalent to:
+
+UPDATE/UPSERT counter
+SET last_value = last_value + 1
+RETURNING last_value
+
+Requirements:
+
+- keyed by game_id
+- foreign key to games
+- ON DELETE NO ACTION
+- ON UPDATE NO ACTION
+- no MAX + 1
+- no counter reuse after Account deletion
+- do not create counters for nonexistent Games
+- do not insert rows into the live counter table
+
+## 8. Identifier constraints
+
+Add:
+
+- a unique constraint/index for `(game_id, account_number_seq)`
+- a unique constraint/index for `(game_id, display_number)`
+
+Keep the existing global `account_code` unique constraint.
+
+Assess whether the redundant non-unique `accounts_account_code_idx` should remain. Do not remove it in this additive stage unless its removal is explicitly required for migration correctness. Otherwise report it for later cleanup.
+
+## 9. Identifier immutability
+
+Add a rollback-friendly database-level guard preventing updates to these fields after Account creation:
+
+- account_code
+- account_number_prefix
+- account_number_seq
+- display_number
+
+A small PostgreSQL trigger/function is acceptable because this is schema-level enforcement.
+
+Requirements:
+
+- INSERT must remain allowed
+- UPDATE of unrelated Account columns must remain allowed
+- UPDATE that changes any protected identifier must fail
+- identical-value updates must not fail unnecessarily
+- the trigger and function must be fully covered by disposable-database tests
+- do not modify runtime code
+
+If the existing project migration conventions prohibit triggers, stop and report the conflict rather than silently replacing this requirement with application-only enforcement.
+
+## 10. Duplicate-permitted fields
+
+PSN Email, Online ID and Family Management Email duplicates are allowed.
+
+Therefore:
+
+- new lookup indexes for these fields must be non-unique
+- do not add unique lookup-hash constraints
+- do not remove the legacy `accounts_email_normalized_active_uniq` index during PS-03C1
+- report that legacy unique index as incompatible with the future runtime contract and scheduled for the later cutover/cleanup stage
+
+## 11. Customer Assignment boundary
+
+Do not modify:
+
+- capacity_customers
+- customer phone fields
+- order assignment logic
+- Customer Assignment enums or indexes
+
+Customer Phone encryption and lookup hash remain a deferred security obligation for the approved Assignment stage.
+
+---
+
+# Migration requirements
+
+Create exactly one new sequential migration after 0001.
+
+Expected form:
+
+lib/db/migrations/0002_<generated_name>.sql
+
+Requirements:
+
+- migration must be generated from the updated Drizzle schema using the repository-approved migration workflow
+- manually inspect generated SQL before execution
+- no destructive DROP of existing Account columns, tables, enums or values
+- no data INSERT, UPDATE or DELETE
+- no Account, Capacity, Backup Code, Game, Order or Customer rows
+- no modification to migrations 0000 or 0001
+- migration must be rollback-friendly
+- record the SHA-256 hash of the new migration
+
+Do not use:
+
+drizzle-kit push
+
+---
+
+# Isolated disposable database validation
+
+Before applying the migration to the active Replit database, test it on an isolated disposable PostgreSQL database.
+
+The disposable database must not be the active workspace database.
+
+Required test sequence:
+
+1. Create or obtain an isolated disposable PostgreSQL database.
+2. Apply migration 0000.
+3. Apply migration 0001.
+4. Apply the new PS-03C1 migration.
+5. Verify the applied migration history and exact hashes.
+6. Inspect all new:
+   - enums/types
+   - columns
+   - tables
+   - sequences
+   - indexes
+   - unique constraints
+   - check constraints
+   - foreign keys
+   - triggers and functions
+7. Verify no unexpected schema changes occurred.
+8. Verify all old schema objects still exist.
+9. Verify migrations 0000 and 0001 remain unchanged.
+
+Use synthetic, non-sensitive data only inside the disposable database when required for constraint tests.
+
+Mandatory isolated tests:
+
+- global sequence produces increasing non-reused values
+- per-game counter allocation increments atomically
+- different Games have independent per-game counters
+- unique `(game_id, account_number_seq)` enforcement
+- unique `(game_id, display_number)` enforcement
+- duplicate PSN Email lookup hashes remain allowed
+- duplicate Family Management Email lookup hashes remain allowed
+- duplicate Online ID normalized/lookup values remain allowed
+- identifier-update trigger blocks actual identifier changes
+- identifier-update trigger permits unrelated Account updates
+- Capacity FINISHED consistency constraint accepts valid states
+- Capacity FINISHED consistency constraint rejects contradictory states
+- Backup Code lifecycle enum accepts only approved values
+- manual Account override accepts only SOLD, INACTIVE or NULL
+- new shared Z3 representation accepts Z3_SHARED_PS5_PS4
+- legacy columns and enum values remain present
+
+Do not use real credentials, emails, passwords, Backup Codes, phones or order data in tests.
+
+Destroy or clearly isolate the disposable database after testing.
+
+---
+
+# Rollback validation
+
+Prepare an explicit rollback SQL plan for only the objects introduced by PS-03C1.
+
+The rollback plan must remove new objects in safe reverse dependency order, including where applicable:
+
+- triggers
+- trigger functions
+- new indexes and constraints
+- new sequence/counter structures
+- new columns
+- new enums/types
+
+Requirements:
+
+- never alter migrations 0000 or 0001
+- never remove legacy schema objects
+- test the rollback only on the isolated disposable database
+- after rollback, compare the disposable schema with the exact post-0001 schema
+- prove that the rollback does not affect existing Games schema or migration history
+
+Do not execute rollback on the active Replit database.
+
+Save the rollback plan as a review artifact, not as an automatically executed production migration.
+
+---
+
+# Active Replit database migration
+
+Only after all isolated migration and rollback tests pass:
+
+1. Reconfirm active Account-related row counts are all zero.
+2. Reconfirm hashes of migrations 0000 and 0001.
+3. Apply only the new versioned migration using the repository migration runner.
+4. Do not use drizzle-kit push.
+5. Do not insert test data into the active database.
+6. Do not call Account write routes.
+
+If any precondition differs from the approved PS-03C0 baseline, stop before applying the migration.
+
+---
+
+# Live post-migration verification
+
+After applying the new migration, execute sanitized metadata checks inside:
+
+BEGIN TRANSACTION READ ONLY;
+
+Confirm:
+
+transaction_read_only = on
+
+Verify:
+
+- migration 0002 is recorded once
+- migration 0002 hash matches the repository file exactly
+- migrations 0000 and 0001 retain their exact original hashes
+- all expected new schema objects exist
+- all expected constraints and indexes exist
+- all Account-related foreign keys retain their expected behavior
+- no unauthorized object was changed
+- no runtime table gained data
+- all Account-related tables remain empty
+
+Required final live row counts:
+
+- games = 0
+- accounts = 0
+- account_backup_codes = 0
+- account_capacities = 0
+- capacity_customers = 0
+- orders = 0
+- new per-game counter table = 0, if created
+
+End verification with:
+
+ROLLBACK;
+
+Never expose:
+
+- DATABASE_URL
+- host credentials
+- connection strings
+- encryption keys
+- lookup-hash keys
+- passwords
+- ciphertext
+- secret values
+
+---
+
+# Required checks
+
+Use the existing package manager and repository scripts.
+
+Report exact commands and complete sanitized results for:
+
+- formatting or lint checks relevant to changed files
+- TypeScript typecheck
+- Drizzle migration consistency/check command
+- database package tests
+- new migration tests
+- clean migration from 0000 → 0001 → 0002
+- disposable rollback test
+- live post-migration schema verification
+- Git diff inspection
+
+Do not install new dependencies.
+
+If an existing script is unavailable, report that fact and use the smallest repository-compatible alternative without changing dependencies.
+
+---
+
+# Required final report
+
+Return a complete PS-03C1 implementation and evidence report containing:
+
+## 1. Facts
+What was directly changed and executed.
+
+## 2. Exact changed file list
+List every created or modified file.
+
+## 3. Migration identity
+Include:
+
+- migration filename
+- SHA-256
+- migration order
+- applied migration record
+
+## 4. Exact diff
+Provide:
+
+- `git diff --stat`
+- complete diff for all changed schema and migration files
+- complete diff for migration tests
+- no unrelated changes
+
+If the diff is too large for chat, save a complete patch file in a persistent workspace path and expose it as a downloadable artifact.
+
+## 5. Schema changes
+List every new:
+
+- enum/type
+- column
+- table
+- sequence
+- index
+- constraint
+- trigger
+- function
+
+## 6. Isolated database test evidence
+Include exact commands and sanitized outputs.
+
+## 7. Rollback evidence
+Include:
+
+- rollback strategy
+- rollback artifact path
+- isolated rollback test result
+- proof that the schema returned to the post-0001 state
+
+## 8. Live migration evidence
+Include sanitized evidence that:
+
+- migration 0002 was applied once
+- its hash matches
+- 0000 and 0001 were not modified
+- expected objects exist
+- all Account-related tables remain empty
+
+## 9. Runtime boundary confirmation
+Explicitly confirm:
+
+- no Backend Account CRUD changes
+- no OpenAPI changes
+- no generated client changes
+- no frontend changes
+- no Secret Reveal
+- no Customer Assignment changes
+- no capacity_customers changes
+- no runtime source changes
+
+## 10. Risks and deferred work
+List remaining work for Stage B and Stage C without implementing it.
+
+## 11. Final verdict
+
+Do not claim the whole Account system is secure, complete, stable or production-ready.
+
+Use only evidence-based wording.
+
+Final stage status must be:
+
+PS-03C1 — IMPLEMENTED, AWAITING COMMAND CENTER REVIEW
+
+Do not automatically approve or close PS-03C1.
+
+Stop after the PS-03C1 evidence report.
