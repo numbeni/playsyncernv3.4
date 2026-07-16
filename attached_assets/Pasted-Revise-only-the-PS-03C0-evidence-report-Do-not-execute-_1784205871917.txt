@@ -1,0 +1,96 @@
+Revise only the PS-03C0 evidence report.
+
+Do not execute migrations, modify files, change the database, write implementation code, or start the next stage.
+
+The previous report contains contract interpretation errors and lacks reviewable sanitized evidence.
+
+Required corrections:
+
+1. Correct D1 interpretation.
+
+AVAILABLE and PARTIALLY_SOLD are derived effective Account statuses and must not be stored as manual persisted values.
+
+Only SOLD and INACTIVE are manual persisted overrides.
+
+The migration-readiness plan must therefore propose a nullable persisted override model containing only SOLD and INACTIVE, while AVAILABLE and PARTIALLY_SOLD are derived from Capacity and Assignment state.
+
+Do not propose a persisted enum containing all four Account statuses.
+
+2. Correct D3 and lookup-index recommendations.
+
+Duplicate PSN Email, Online ID and Family Management Email are allowed with warning and explicit confirmation.
+
+Do not recommend blanket UNIQUE indexes on lookup hashes.
+
+Lookup-hash indexes for duplicate-permitted fields must be non-unique so duplicate detection can return warnings instead of causing database rejection.
+
+3. Correct D4 scope.
+
+Explicitly cover:
+
+- PSN Email
+- PSN Password
+- Email Password
+- Family Management Email
+- Backup Codes
+- Customer Phone
+
+Encrypted values and separate keyed lookup hashes must be distinguished.
+
+Do not store searchable plaintext credentials.
+
+Customer Phone remains outside Account Core because Customer Assignment is outside Account Core. Record its encryption and lookup requirement as a deferred security obligation and do not modify or promote capacity_customers.
+
+4. Add the missing D2 migration-readiness design:
+
+- concurrency-safe global account-code allocation
+- concurrency-safe per-game sequence allocation
+- no MAX + 1
+- no identifier reuse
+- required unique constraints
+- identifier immutability after creation
+
+5. Correct the Capacity Template finding.
+
+The current Z3_PS5 enum does not satisfy the approved shared Z3 contract.
+
+The approved type is conceptually Z3_SHARED_PS5_PS4, and PS4_ONLY Accounts must also receive the Shared Z3 capacity.
+
+6. Expand Backup Code readiness findings:
+
+- encrypted value
+- separate keyed lookup hash
+- AVAILABLE / USED / REVOKED lifecycle
+- at least one Backup Code required at Account creation
+- no Backup Code in generic DTOs
+- no Runtime Reveal before Authentication, RBAC, permission checks and actor-based Audit Logging
+
+7. Correct the environment conclusion.
+
+Do not claim that the database is definitely not used by a deployment unless this is directly proven.
+
+State only what can be established from the active Replit workspace DATABASE_URL and PostgreSQL metadata.
+
+8. Attach sanitized evidence.
+
+Include the exact read-only SQL queries or evidence script used and sanitized outputs for:
+
+- database identity
+- SSL state
+- drizzle.__drizzle_migrations rows and hashes
+- table existence and row counts
+- column/nullability metadata
+- enum values
+- indexes
+- unique and check constraints
+- foreign keys and delete/update actions
+- duplicate, null and orphan aggregate counts
+- plaintext-risk aggregate counts
+
+Never return any actual email, password, Backup Code, phone number, order identifier, credential, ciphertext or connection string.
+
+Confirm that all queries ran inside an explicit read-only transaction where practical and that no source or database changes occurred.
+
+Return only the corrected PS-03C0 evidence report.
+
+Do not close PS-03C0 automatically. Stop after the corrected report and wait for Command Center review.
