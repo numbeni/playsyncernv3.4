@@ -1,0 +1,170 @@
+Continue only:
+
+PS-03C1 — Final Evidence Integrity and Workflow Triage
+
+Migration 0002 is already applied to the live Replit database.
+
+Do not edit:
+
+- 0000_zippy_leech.sql
+- 0001_glossy_onslaught.sql
+- 0002_warm_swarm.sql
+- the live database schema
+- runtime API or frontend code
+- OpenAPI
+- generated clients
+- Customer Assignment
+
+Do not create migration 0003 unless Command Center separately authorizes a confirmed schema correction.
+
+## 1. Produce the actual complete PS-03C1 diff
+
+The existing reports/ps03c1_complete.diff contains only the final correction changes and is not a complete stage-wide diff.
+
+Generate a complete diff against the canonical PS-02B baseline:
+
+playsyncer-ps02b-final.zip
+SHA-256:
+d6a61547e1a61a7660278f2ed699cabe20eb57c21364c75543a3649773b80135
+
+The complete diff and changed-file list must include every PS-03C1 file, including where applicable:
+
+- lib/db/migrations/0002_warm_swarm.sql
+- lib/db/migrations/meta/0002_snapshot.json
+- lib/db/migrations/meta/_journal.json
+- lib/db/package.json
+- lib/db/src/schema/enums.ts
+- lib/db/src/schema/accounts.ts
+- lib/db/src/schema/account-backup-codes.ts
+- lib/db/src/schema/account-capacities.ts
+- lib/db/src/schema/game-account-sequences.ts
+- lib/db/src/schema/index.ts
+- lib/db/src/migrations/ps03c1.test.ts
+- reports/ps03c1_rollback.sql
+
+Save the corrected full diff as:
+
+reports/ps03c1_full_baseline.diff
+
+Do not rely only on the current Git working-tree diff or current dirty files.
+
+## 2. Investigate the failing API Server workflow without fixing runtime
+
+Collect the exact workflow name, command, exit code and complete sanitized error output.
+
+Determine whether the failure:
+
+- existed before PS-03C1
+- is caused by Replit workflow configuration
+- is caused by environment/port configuration
+- is caused by the live 0002 schema
+- is unrelated but currently unresolved
+
+Do not modify runtime code.
+
+If the failure appears related to migration 0002, stop and report a release blocker.
+
+If it is proven pre-existing or unrelated, provide evidence.
+
+Never expose DATABASE_URL or credentials.
+
+## 3. Correct the disposable database test harness
+
+When PS03C1_TEST_DATABASE_URL is provided, management operations must target the same PostgreSQL server as that URL.
+
+Do not create or drop a database on the active workspace server while connecting the tests to a different server.
+
+Preserve these protections:
+
+- disposable database name pattern
+- active database name rejection
+- unique random database name
+- cleanup after tests
+- no synthetic data in the live database
+
+## 4. Strengthen counter tests
+
+Add isolated tests for:
+
+- two concurrent first allocations when no per-game counter row exists
+- actual allocations for two different Games, each beginning independently
+- creating an Account with the allocated sequence, deleting it, then proving the next allocation is not reused
+
+Do not modify runtime code or migration 0002.
+
+## 5. Verify disposable migration history directly
+
+After applying migrations to the disposable database, query:
+
+drizzle.__drizzle_migrations
+
+Provide exact sanitized evidence that:
+
+- 0000 exists once with the expected hash
+- 0001 exists once with the expected hash
+- 0002 exists once with the expected hash
+- order is correct
+
+Do not infer this only from passing tests.
+
+## 6. Clarify rollback authority
+
+Keep reports/ps03c1_rollback.sql as disposable-database validation only.
+
+Explicitly document:
+
+- it must not be executed on the active Replit database
+- migration 0002 remains recorded in live Drizzle history
+- any future live schema reversal must be implemented as a separately approved forward corrective migration
+- 0002 must never be edited or removed
+
+Do not delete migration-history rows.
+
+## 7. Correct the misleading schema comment
+
+In lib/db/src/schema/accounts.ts, remove or correct any statement saying the Account prefix is stored separately to allow later changes.
+
+The approved identifiers and prefix are immutable after Account creation.
+
+This is a comment-only correction.
+
+## 8. Re-run evidence checks
+
+Run and return exact sanitized outputs for:
+
+- pnpm run typecheck
+- pnpm --filter @workspace/db run db:check
+- pnpm --filter @workspace/db run test
+- pnpm --filter @workspace/db run test:migrations
+
+Do not reapply migration 0002.
+
+Perform a read-only live verification confirming:
+
+- 0002 remains applied exactly once
+- its hash remains unchanged
+- all Account-related tables remain empty
+- game_account_sequences remains empty
+
+Finish with ROLLBACK.
+
+## 9. Required persistent artifacts
+
+Create or update:
+
+- reports/ps03c1_final_review_report.md
+- reports/ps03c1_full_baseline.diff
+- reports/ps03c1_rollback.sql
+
+Also export the complete final source package and report:
+
+- filename
+- size
+- SHA-256
+
+Final status must remain:
+
+PS-03C1 — IMPLEMENTED, AWAITING COMMAND CENTER REVIEW
+
+Do not approve or close PS-03C1 automatically.
+Stop after returning the complete evidence and API workflow triage.

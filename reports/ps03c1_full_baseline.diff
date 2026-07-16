@@ -1,0 +1,2813 @@
+--- lib/db/migrations/0002_warm_swarm.sql ---
+--- /tmp/ps02b-baseline/lib/db/migrations/0002_warm_swarm.sql	1970-01-01 00:00:00.000000000 +0000
++++ /home/runner/workspace/lib/db/migrations/0002_warm_swarm.sql	2026-07-16 13:35:15.770183437 +0000
+@@ -0,0 +1,57 @@
++CREATE TYPE "public"."account_status_override" AS ENUM('SOLD', 'INACTIVE');--> statement-breakpoint
++CREATE TYPE "public"."backup_code_status" AS ENUM('AVAILABLE', 'USED', 'REVOKED');--> statement-breakpoint
++CREATE TYPE "public"."capacity_kind_v2" AS ENUM('Z2_PS5', 'Z2_PS4', 'Z3_SHARED_PS5_PS4');--> statement-breakpoint
++CREATE SEQUENCE "public"."account_code_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 2147483647 START WITH 1 CACHE 1;--> statement-breakpoint
++CREATE TABLE "game_account_sequences" (
++	"game_id" uuid PRIMARY KEY NOT NULL,
++	"last_value" integer DEFAULT 0 NOT NULL
++);
++--> statement-breakpoint
++ALTER TABLE "game_account_sequences" ADD CONSTRAINT "game_account_sequences_game_id_games_id_fk" FOREIGN KEY ("game_id") REFERENCES "public"."games"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
++ALTER TABLE "accounts" ADD COLUMN "psn_email_encrypted" text;--> statement-breakpoint
++ALTER TABLE "accounts" ADD COLUMN "psn_email_lookup_hash" text;--> statement-breakpoint
++ALTER TABLE "accounts" ADD COLUMN "psn_password_encrypted" text;--> statement-breakpoint
++ALTER TABLE "accounts" ADD COLUMN "psn_password_lookup_hash" text;--> statement-breakpoint
++ALTER TABLE "accounts" ADD COLUMN "email_password_encrypted_v2" text;--> statement-breakpoint
++ALTER TABLE "accounts" ADD COLUMN "email_password_lookup_hash" text;--> statement-breakpoint
++ALTER TABLE "accounts" ADD COLUMN "family_management_email_encrypted_v2" text;--> statement-breakpoint
++ALTER TABLE "accounts" ADD COLUMN "family_management_email_lookup_hash" text;--> statement-breakpoint
++ALTER TABLE "accounts" ADD COLUMN "status_override" "account_status_override";--> statement-breakpoint
++ALTER TABLE "account_backup_codes" ADD COLUMN "code_encrypted_v2" text;--> statement-breakpoint
++ALTER TABLE "account_backup_codes" ADD COLUMN "code_lookup_hash_v2" text;--> statement-breakpoint
++ALTER TABLE "account_backup_codes" ADD COLUMN "status" "backup_code_status" DEFAULT 'AVAILABLE' NOT NULL;--> statement-breakpoint
++ALTER TABLE "account_capacities" ADD COLUMN "capacity_kind_v2" "capacity_kind_v2";--> statement-breakpoint
++ALTER TABLE "account_capacities" ADD COLUMN "is_finished" boolean DEFAULT false NOT NULL;--> statement-breakpoint
++ALTER TABLE "account_capacities" ADD COLUMN "finished_at" timestamp with time zone;--> statement-breakpoint
++CREATE INDEX "accounts_psn_email_lookup_hash_idx" ON "accounts" USING btree ("psn_email_lookup_hash");--> statement-breakpoint
++CREATE INDEX "accounts_psn_password_lookup_hash_idx" ON "accounts" USING btree ("psn_password_lookup_hash");--> statement-breakpoint
++CREATE INDEX "accounts_email_password_lookup_hash_idx" ON "accounts" USING btree ("email_password_lookup_hash");--> statement-breakpoint
++CREATE INDEX "accounts_family_email_lookup_hash_idx" ON "accounts" USING btree ("family_management_email_lookup_hash");--> statement-breakpoint
++CREATE INDEX "accounts_online_id_idx" ON "accounts" USING btree ("online_id");--> statement-breakpoint
++CREATE INDEX "account_backup_codes_status_idx" ON "account_backup_codes" USING btree ("status");--> statement-breakpoint
++CREATE INDEX "account_backup_codes_code_lookup_hash_v2_idx" ON "account_backup_codes" USING btree ("code_lookup_hash_v2");--> statement-breakpoint
++CREATE UNIQUE INDEX "account_capacities_v2_unique_slot" ON "account_capacities" USING btree ("account_id","capacity_kind_v2","instance_no") WHERE "account_capacities"."capacity_kind_v2" IS NOT NULL;--> statement-breakpoint
++CREATE INDEX "account_capacities_is_finished_idx" ON "account_capacities" USING btree ("is_finished");--> statement-breakpoint
++ALTER TABLE "accounts" ADD CONSTRAINT "accounts_game_seq_unique" UNIQUE("game_id","account_number_seq");--> statement-breakpoint
++ALTER TABLE "accounts" ADD CONSTRAINT "accounts_game_display_unique" UNIQUE("game_id","display_number");--> statement-breakpoint
++ALTER TABLE "account_capacities" ADD CONSTRAINT "account_capacities_finished_consistency" CHECK (("account_capacities"."is_finished" = false AND "account_capacities"."finished_at" IS NULL) OR ("account_capacities"."is_finished" = true AND "account_capacities"."finished_at" IS NOT NULL));--> statement-breakpoint
++
++-- Identifier immutability trigger.
++-- Blocks updates that change account_code, account_number_prefix, account_number_seq, or display_number.
++-- Identical-value updates are allowed.
++CREATE OR REPLACE FUNCTION "public"."accounts_protect_identifiers_fn"()
++RETURNS TRIGGER AS $$
++BEGIN
++	IF (OLD."account_code" IS DISTINCT FROM NEW."account_code")
++		OR (OLD."account_number_prefix" IS DISTINCT FROM NEW."account_number_prefix")
++		OR (OLD."account_number_seq" IS DISTINCT FROM NEW."account_number_seq")
++		OR (OLD."display_number" IS DISTINCT FROM NEW."display_number") THEN
++		RAISE EXCEPTION 'Account identifiers are immutable';
++	END IF;
++	RETURN NEW;
++END;
++$$ LANGUAGE plpgsql;--> statement-breakpoint
++CREATE TRIGGER "accounts_protect_identifiers_trigger"
++BEFORE UPDATE ON "public"."accounts"
++FOR EACH ROW
++EXECUTE FUNCTION "public"."accounts_protect_identifiers_fn"();
+--- lib/db/migrations/meta/0002_snapshot.json ---
+--- /tmp/ps02b-baseline/lib/db/migrations/meta/0002_snapshot.json	1970-01-01 00:00:00.000000000 +0000
++++ /home/runner/workspace/lib/db/migrations/meta/0002_snapshot.json	2026-07-16 13:34:26.366183437 +0000
+@@ -0,0 +1,1478 @@
++{
++  "id": "6bae54ac-2933-4603-bbdc-00c2f48e072c",
++  "prevId": "de035ed2-fa2e-4d22-b829-0a56656fbf35",
++  "version": "7",
++  "dialect": "postgresql",
++  "tables": {
++    "public.admins": {
++      "name": "admins",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "username": {
++          "name": "username",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "password_hash": {
++          "name": "password_hash",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "status": {
++          "name": "status",
++          "type": "admin_status",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "'active'"
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "updated_at": {
++          "name": "updated_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "deleted_at": {
++          "name": "deleted_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": false
++        }
++      },
++      "indexes": {},
++      "foreignKeys": {},
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {
++        "admins_username_unique": {
++          "name": "admins_username_unique",
++          "nullsNotDistinct": false,
++          "columns": [
++            "username"
++          ]
++        }
++      },
++      "policies": {},
++      "checkConstraints": {},
++      "isRLSEnabled": false
++    },
++    "public.games": {
++      "name": "games",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "title": {
++          "name": "title",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "title_normalized": {
++          "name": "title_normalized",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "cover_url": {
++          "name": "cover_url",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "platform": {
++          "name": "platform",
++          "type": "game_platform",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "status": {
++          "name": "status",
++          "type": "game_status",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "'ACTIVE'"
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "updated_at": {
++          "name": "updated_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "deleted_at": {
++          "name": "deleted_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": false
++        }
++      },
++      "indexes": {
++        "games_status_idx": {
++          "name": "games_status_idx",
++          "columns": [
++            {
++              "expression": "status",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "games_deleted_at_idx": {
++          "name": "games_deleted_at_idx",
++          "columns": [
++            {
++              "expression": "deleted_at",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "games_title_normalized_uniq": {
++          "name": "games_title_normalized_uniq",
++          "columns": [
++            {
++              "expression": "title_normalized",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": true,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        }
++      },
++      "foreignKeys": {},
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {},
++      "policies": {},
++      "checkConstraints": {
++        "games_title_not_blank": {
++          "name": "games_title_not_blank",
++          "value": "length(trim(\"games\".\"title\")) > 0"
++        },
++        "games_title_max_length": {
++          "name": "games_title_max_length",
++          "value": "length(\"games\".\"title\") <= 120"
++        },
++        "games_title_normalized_not_blank": {
++          "name": "games_title_normalized_not_blank",
++          "value": "length(trim(\"games\".\"title_normalized\")) > 0"
++        },
++        "games_title_normalized_max_length": {
++          "name": "games_title_normalized_max_length",
++          "value": "length(\"games\".\"title_normalized\") <= 120"
++        }
++      },
++      "isRLSEnabled": false
++    },
++    "public.accounts": {
++      "name": "accounts",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "game_id": {
++          "name": "game_id",
++          "type": "uuid",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "account_code": {
++          "name": "account_code",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "account_number_prefix": {
++          "name": "account_number_prefix",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "account_number_seq": {
++          "name": "account_number_seq",
++          "type": "integer",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "display_number": {
++          "name": "display_number",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "email": {
++          "name": "email",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "email_normalized": {
++          "name": "email_normalized",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "playstation_password_encrypted": {
++          "name": "playstation_password_encrypted",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "email_password_encrypted": {
++          "name": "email_password_encrypted",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "family_management_email_encrypted": {
++          "name": "family_management_email_encrypted",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "psn_email_encrypted": {
++          "name": "psn_email_encrypted",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "psn_email_lookup_hash": {
++          "name": "psn_email_lookup_hash",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "psn_password_encrypted": {
++          "name": "psn_password_encrypted",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "psn_password_lookup_hash": {
++          "name": "psn_password_lookup_hash",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "email_password_encrypted_v2": {
++          "name": "email_password_encrypted_v2",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "email_password_lookup_hash": {
++          "name": "email_password_lookup_hash",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "family_management_email_encrypted_v2": {
++          "name": "family_management_email_encrypted_v2",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "family_management_email_lookup_hash": {
++          "name": "family_management_email_lookup_hash",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "online_id": {
++          "name": "online_id",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "birth_date": {
++          "name": "birth_date",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "status": {
++          "name": "status",
++          "type": "account_status",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "'active'"
++        },
++        "status_override": {
++          "name": "status_override",
++          "type": "account_status_override",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "updated_at": {
++          "name": "updated_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "deleted_at": {
++          "name": "deleted_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": false
++        }
++      },
++      "indexes": {
++        "accounts_email_normalized_active_uniq": {
++          "name": "accounts_email_normalized_active_uniq",
++          "columns": [
++            {
++              "expression": "email_normalized",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": true,
++          "where": "\"accounts\".\"deleted_at\" IS NULL",
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "accounts_psn_email_lookup_hash_idx": {
++          "name": "accounts_psn_email_lookup_hash_idx",
++          "columns": [
++            {
++              "expression": "psn_email_lookup_hash",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "accounts_psn_password_lookup_hash_idx": {
++          "name": "accounts_psn_password_lookup_hash_idx",
++          "columns": [
++            {
++              "expression": "psn_password_lookup_hash",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "accounts_email_password_lookup_hash_idx": {
++          "name": "accounts_email_password_lookup_hash_idx",
++          "columns": [
++            {
++              "expression": "email_password_lookup_hash",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "accounts_family_email_lookup_hash_idx": {
++          "name": "accounts_family_email_lookup_hash_idx",
++          "columns": [
++            {
++              "expression": "family_management_email_lookup_hash",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "accounts_online_id_idx": {
++          "name": "accounts_online_id_idx",
++          "columns": [
++            {
++              "expression": "online_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "accounts_game_id_idx": {
++          "name": "accounts_game_id_idx",
++          "columns": [
++            {
++              "expression": "game_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "accounts_status_idx": {
++          "name": "accounts_status_idx",
++          "columns": [
++            {
++              "expression": "status",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "accounts_deleted_at_idx": {
++          "name": "accounts_deleted_at_idx",
++          "columns": [
++            {
++              "expression": "deleted_at",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "accounts_account_code_idx": {
++          "name": "accounts_account_code_idx",
++          "columns": [
++            {
++              "expression": "account_code",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        }
++      },
++      "foreignKeys": {
++        "accounts_game_id_games_id_fk": {
++          "name": "accounts_game_id_games_id_fk",
++          "tableFrom": "accounts",
++          "tableTo": "games",
++          "columnsFrom": [
++            "game_id"
++          ],
++          "columnsTo": [
++            "id"
++          ],
++          "onDelete": "no action",
++          "onUpdate": "no action"
++        }
++      },
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {
++        "accounts_account_code_unique": {
++          "name": "accounts_account_code_unique",
++          "nullsNotDistinct": false,
++          "columns": [
++            "account_code"
++          ]
++        },
++        "accounts_game_seq_unique": {
++          "name": "accounts_game_seq_unique",
++          "nullsNotDistinct": false,
++          "columns": [
++            "game_id",
++            "account_number_seq"
++          ]
++        },
++        "accounts_game_display_unique": {
++          "name": "accounts_game_display_unique",
++          "nullsNotDistinct": false,
++          "columns": [
++            "game_id",
++            "display_number"
++          ]
++        }
++      },
++      "policies": {},
++      "checkConstraints": {},
++      "isRLSEnabled": false
++    },
++    "public.account_backup_codes": {
++      "name": "account_backup_codes",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "account_id": {
++          "name": "account_id",
++          "type": "uuid",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "code_encrypted": {
++          "name": "code_encrypted",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "used_at": {
++          "name": "used_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "code_encrypted_v2": {
++          "name": "code_encrypted_v2",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "code_lookup_hash_v2": {
++          "name": "code_lookup_hash_v2",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "status": {
++          "name": "status",
++          "type": "backup_code_status",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "'AVAILABLE'"
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        }
++      },
++      "indexes": {
++        "account_backup_codes_account_id_idx": {
++          "name": "account_backup_codes_account_id_idx",
++          "columns": [
++            {
++              "expression": "account_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "account_backup_codes_status_idx": {
++          "name": "account_backup_codes_status_idx",
++          "columns": [
++            {
++              "expression": "status",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "account_backup_codes_code_lookup_hash_v2_idx": {
++          "name": "account_backup_codes_code_lookup_hash_v2_idx",
++          "columns": [
++            {
++              "expression": "code_lookup_hash_v2",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        }
++      },
++      "foreignKeys": {
++        "account_backup_codes_account_id_accounts_id_fk": {
++          "name": "account_backup_codes_account_id_accounts_id_fk",
++          "tableFrom": "account_backup_codes",
++          "tableTo": "accounts",
++          "columnsFrom": [
++            "account_id"
++          ],
++          "columnsTo": [
++            "id"
++          ],
++          "onDelete": "no action",
++          "onUpdate": "no action"
++        }
++      },
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {},
++      "policies": {},
++      "checkConstraints": {},
++      "isRLSEnabled": false
++    },
++    "public.account_capacities": {
++      "name": "account_capacities",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "account_id": {
++          "name": "account_id",
++          "type": "uuid",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "capacity_kind": {
++          "name": "capacity_kind",
++          "type": "capacity_kind",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "capacity_kind_v2": {
++          "name": "capacity_kind_v2",
++          "type": "capacity_kind_v2",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "instance_no": {
++          "name": "instance_no",
++          "type": "integer",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "display_label": {
++          "name": "display_label",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "is_finished": {
++          "name": "is_finished",
++          "type": "boolean",
++          "primaryKey": false,
++          "notNull": true,
++          "default": false
++        },
++        "finished_at": {
++          "name": "finished_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        }
++      },
++      "indexes": {
++        "account_capacities_v2_unique_slot": {
++          "name": "account_capacities_v2_unique_slot",
++          "columns": [
++            {
++              "expression": "account_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            },
++            {
++              "expression": "capacity_kind_v2",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            },
++            {
++              "expression": "instance_no",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": true,
++          "where": "\"account_capacities\".\"capacity_kind_v2\" IS NOT NULL",
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "account_capacities_account_id_idx": {
++          "name": "account_capacities_account_id_idx",
++          "columns": [
++            {
++              "expression": "account_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "account_capacities_is_finished_idx": {
++          "name": "account_capacities_is_finished_idx",
++          "columns": [
++            {
++              "expression": "is_finished",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        }
++      },
++      "foreignKeys": {
++        "account_capacities_account_id_accounts_id_fk": {
++          "name": "account_capacities_account_id_accounts_id_fk",
++          "tableFrom": "account_capacities",
++          "tableTo": "accounts",
++          "columnsFrom": [
++            "account_id"
++          ],
++          "columnsTo": [
++            "id"
++          ],
++          "onDelete": "no action",
++          "onUpdate": "no action"
++        }
++      },
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {
++        "account_capacities_unique_slot": {
++          "name": "account_capacities_unique_slot",
++          "nullsNotDistinct": false,
++          "columns": [
++            "account_id",
++            "capacity_kind",
++            "instance_no"
++          ]
++        }
++      },
++      "policies": {},
++      "checkConstraints": {
++        "account_capacities_finished_consistency": {
++          "name": "account_capacities_finished_consistency",
++          "value": "(\"account_capacities\".\"is_finished\" = false AND \"account_capacities\".\"finished_at\" IS NULL) OR (\"account_capacities\".\"is_finished\" = true AND \"account_capacities\".\"finished_at\" IS NOT NULL)"
++        }
++      },
++      "isRLSEnabled": false
++    },
++    "public.game_account_sequences": {
++      "name": "game_account_sequences",
++      "schema": "",
++      "columns": {
++        "game_id": {
++          "name": "game_id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true
++        },
++        "last_value": {
++          "name": "last_value",
++          "type": "integer",
++          "primaryKey": false,
++          "notNull": true,
++          "default": 0
++        }
++      },
++      "indexes": {},
++      "foreignKeys": {
++        "game_account_sequences_game_id_games_id_fk": {
++          "name": "game_account_sequences_game_id_games_id_fk",
++          "tableFrom": "game_account_sequences",
++          "tableTo": "games",
++          "columnsFrom": [
++            "game_id"
++          ],
++          "columnsTo": [
++            "id"
++          ],
++          "onDelete": "no action",
++          "onUpdate": "no action"
++        }
++      },
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {},
++      "policies": {},
++      "checkConstraints": {},
++      "isRLSEnabled": false
++    },
++    "public.orders": {
++      "name": "orders",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "order_code": {
++          "name": "order_code",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "source": {
++          "name": "source",
++          "type": "order_source",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "'manual'"
++        },
++        "status": {
++          "name": "status",
++          "type": "order_status",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "'pending_assignment'"
++        },
++        "notes": {
++          "name": "notes",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "updated_at": {
++          "name": "updated_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "deleted_at": {
++          "name": "deleted_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": false
++        }
++      },
++      "indexes": {
++        "orders_status_idx": {
++          "name": "orders_status_idx",
++          "columns": [
++            {
++              "expression": "status",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "orders_source_idx": {
++          "name": "orders_source_idx",
++          "columns": [
++            {
++              "expression": "source",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "orders_deleted_at_idx": {
++          "name": "orders_deleted_at_idx",
++          "columns": [
++            {
++              "expression": "deleted_at",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        }
++      },
++      "foreignKeys": {},
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {
++        "orders_order_code_unique": {
++          "name": "orders_order_code_unique",
++          "nullsNotDistinct": false,
++          "columns": [
++            "order_code"
++          ]
++        }
++      },
++      "policies": {},
++      "checkConstraints": {},
++      "isRLSEnabled": false
++    },
++    "public.capacity_customers": {
++      "name": "capacity_customers",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "capacity_id": {
++          "name": "capacity_id",
++          "type": "uuid",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "order_id": {
++          "name": "order_id",
++          "type": "uuid",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "customer_phone_encrypted": {
++          "name": "customer_phone_encrypted",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "customer_phone_blind_index": {
++          "name": "customer_phone_blind_index",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "status": {
++          "name": "status",
++          "type": "capacity_customer_status",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "'active'"
++        },
++        "note": {
++          "name": "note",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "updated_at": {
++          "name": "updated_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "deleted_at": {
++          "name": "deleted_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": false
++        }
++      },
++      "indexes": {
++        "capacity_customers_active_assignment_uniq": {
++          "name": "capacity_customers_active_assignment_uniq",
++          "columns": [
++            {
++              "expression": "capacity_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            },
++            {
++              "expression": "order_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": true,
++          "where": "\"capacity_customers\".\"status\" = 'active'",
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "capacity_customers_capacity_id_idx": {
++          "name": "capacity_customers_capacity_id_idx",
++          "columns": [
++            {
++              "expression": "capacity_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "capacity_customers_order_id_idx": {
++          "name": "capacity_customers_order_id_idx",
++          "columns": [
++            {
++              "expression": "order_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "capacity_customers_status_idx": {
++          "name": "capacity_customers_status_idx",
++          "columns": [
++            {
++              "expression": "status",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "capacity_customers_phone_blind_idx": {
++          "name": "capacity_customers_phone_blind_idx",
++          "columns": [
++            {
++              "expression": "customer_phone_blind_index",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        }
++      },
++      "foreignKeys": {
++        "capacity_customers_capacity_id_account_capacities_id_fk": {
++          "name": "capacity_customers_capacity_id_account_capacities_id_fk",
++          "tableFrom": "capacity_customers",
++          "tableTo": "account_capacities",
++          "columnsFrom": [
++            "capacity_id"
++          ],
++          "columnsTo": [
++            "id"
++          ],
++          "onDelete": "no action",
++          "onUpdate": "no action"
++        },
++        "capacity_customers_order_id_orders_id_fk": {
++          "name": "capacity_customers_order_id_orders_id_fk",
++          "tableFrom": "capacity_customers",
++          "tableTo": "orders",
++          "columnsFrom": [
++            "order_id"
++          ],
++          "columnsTo": [
++            "id"
++          ],
++          "onDelete": "no action",
++          "onUpdate": "no action"
++        }
++      },
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {},
++      "policies": {},
++      "checkConstraints": {},
++      "isRLSEnabled": false
++    },
++    "public.audit_logs": {
++      "name": "audit_logs",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "admin_id": {
++          "name": "admin_id",
++          "type": "uuid",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "action": {
++          "name": "action",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "entity": {
++          "name": "entity",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "entity_id": {
++          "name": "entity_id",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "before": {
++          "name": "before",
++          "type": "jsonb",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "after": {
++          "name": "after",
++          "type": "jsonb",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        }
++      },
++      "indexes": {
++        "audit_logs_admin_id_idx": {
++          "name": "audit_logs_admin_id_idx",
++          "columns": [
++            {
++              "expression": "admin_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "audit_logs_entity_idx": {
++          "name": "audit_logs_entity_idx",
++          "columns": [
++            {
++              "expression": "entity",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "audit_logs_entity_id_idx": {
++          "name": "audit_logs_entity_id_idx",
++          "columns": [
++            {
++              "expression": "entity_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "audit_logs_created_at_idx": {
++          "name": "audit_logs_created_at_idx",
++          "columns": [
++            {
++              "expression": "created_at",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        }
++      },
++      "foreignKeys": {
++        "audit_logs_admin_id_admins_id_fk": {
++          "name": "audit_logs_admin_id_admins_id_fk",
++          "tableFrom": "audit_logs",
++          "tableTo": "admins",
++          "columnsFrom": [
++            "admin_id"
++          ],
++          "columnsTo": [
++            "id"
++          ],
++          "onDelete": "no action",
++          "onUpdate": "no action"
++        }
++      },
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {},
++      "policies": {},
++      "checkConstraints": {},
++      "isRLSEnabled": false
++    }
++  },
++  "enums": {
++    "public.account_status": {
++      "name": "account_status",
++      "schema": "public",
++      "values": [
++        "active",
++        "disabled"
++      ]
++    },
++    "public.account_status_override": {
++      "name": "account_status_override",
++      "schema": "public",
++      "values": [
++        "SOLD",
++        "INACTIVE"
++      ]
++    },
++    "public.admin_status": {
++      "name": "admin_status",
++      "schema": "public",
++      "values": [
++        "active",
++        "inactive"
++      ]
++    },
++    "public.backup_code_status": {
++      "name": "backup_code_status",
++      "schema": "public",
++      "values": [
++        "AVAILABLE",
++        "USED",
++        "REVOKED"
++      ]
++    },
++    "public.capacity_customer_status": {
++      "name": "capacity_customer_status",
++      "schema": "public",
++      "values": [
++        "active",
++        "removed",
++        "cancelled"
++      ]
++    },
++    "public.capacity_kind": {
++      "name": "capacity_kind",
++      "schema": "public",
++      "values": [
++        "Z2_PS5",
++        "Z2_PS4",
++        "Z3_PS5"
++      ]
++    },
++    "public.capacity_kind_v2": {
++      "name": "capacity_kind_v2",
++      "schema": "public",
++      "values": [
++        "Z2_PS5",
++        "Z2_PS4",
++        "Z3_SHARED_PS5_PS4"
++      ]
++    },
++    "public.capacity_platform": {
++      "name": "capacity_platform",
++      "schema": "public",
++      "values": [
++        "PS4",
++        "PS5"
++      ]
++    },
++    "public.game_platform": {
++      "name": "game_platform",
++      "schema": "public",
++      "values": [
++        "PS5_ONLY",
++        "PS4_AND_PS5",
++        "PS4_ONLY"
++      ]
++    },
++    "public.game_status": {
++      "name": "game_status",
++      "schema": "public",
++      "values": [
++        "ACTIVE",
++        "INACTIVE"
++      ]
++    },
++    "public.order_source": {
++      "name": "order_source",
++      "schema": "public",
++      "values": [
++        "manual",
++        "woocommerce",
++        "api"
++      ]
++    },
++    "public.order_status": {
++      "name": "order_status",
++      "schema": "public",
++      "values": [
++        "pending_assignment",
++        "assigned",
++        "delivered",
++        "failed",
++        "cancelled"
++      ]
++    }
++  },
++  "schemas": {},
++  "sequences": {
++    "public.account_code_seq": {
++      "name": "account_code_seq",
++      "schema": "public",
++      "increment": "1",
++      "startWith": "1",
++      "minValue": "1",
++      "maxValue": "2147483647",
++      "cache": "1",
++      "cycle": false
++    }
++  },
++  "roles": {},
++  "policies": {},
++  "views": {},
++  "_meta": {
++    "columns": {},
++    "schemas": {},
++    "tables": {}
++  }
++}
+\ No newline at end of file
+--- lib/db/migrations/meta/_journal.json ---
+--- /tmp/ps02b-baseline/lib/db/migrations/meta/_journal.json	2026-07-15 15:47:09.000000000 +0000
++++ /home/runner/workspace/lib/db/migrations/meta/_journal.json	2026-07-16 13:34:26.366183437 +0000
+@@ -15,6 +15,13 @@
+       "when": 1784109971200,
+       "tag": "0001_glossy_onslaught",
+       "breakpoints": true
++    },
++    {
++      "idx": 2,
++      "version": "7",
++      "when": 1784208866372,
++      "tag": "0002_warm_swarm",
++      "breakpoints": true
+     }
+   ]
+ }
+\ No newline at end of file
+--- lib/db/package.json ---
+--- /tmp/ps02b-baseline/lib/db/package.json	2026-07-15 15:47:09.000000000 +0000
++++ /home/runner/workspace/lib/db/package.json	2026-07-16 13:37:07.442183437 +0000
+@@ -13,6 +13,7 @@
+     "db:migrate": "drizzle-kit migrate --config ./drizzle.config.ts",
+     "db:check": "drizzle-kit check --config ./drizzle.config.ts",
+     "test": "node --test src/helpers/*.test.ts",
++    "test:migrations": "node --test --test-concurrency=1 src/migrations/*.test.ts",
+     "push": "drizzle-kit push --config ./drizzle.config.ts",
+     "push-force": "drizzle-kit push --force --config ./drizzle.config.ts"
+   },
+--- lib/db/src/schema/enums.ts ---
+--- /tmp/ps02b-baseline/lib/db/src/schema/enums.ts	2026-07-15 15:47:09.000000000 +0000
++++ /home/runner/workspace/lib/db/src/schema/enums.ts	2026-07-16 13:33:43.178183437 +0000
+@@ -13,12 +13,23 @@
+   "disabled",
+ ]);
+ 
++export const accountStatusOverrideEnum = pgEnum("account_status_override", [
++  "SOLD",
++  "INACTIVE",
++]);
++
+ export const capacityKindEnum = pgEnum("capacity_kind", [
+   "Z2_PS5",
+   "Z2_PS4",
+   "Z3_PS5",
+ ]);
+ 
++export const capacityKindV2Enum = pgEnum("capacity_kind_v2", [
++  "Z2_PS5",
++  "Z2_PS4",
++  "Z3_SHARED_PS5_PS4",
++]);
++
+ export const capacityPlatformEnum = pgEnum("capacity_platform", ["PS4", "PS5"]);
+ 
+ export const orderSourceEnum = pgEnum("order_source", [
+@@ -41,4 +52,10 @@
+   "cancelled",
+ ]);
+ 
++export const backupCodeStatusEnum = pgEnum("backup_code_status", [
++  "AVAILABLE",
++  "USED",
++  "REVOKED",
++]);
++
+ export const adminStatusEnum = pgEnum("admin_status", ["active", "inactive"]);
+--- lib/db/src/schema/accounts.ts ---
+--- /tmp/ps02b-baseline/lib/db/src/schema/accounts.ts	2026-07-15 15:47:09.000000000 +0000
++++ /home/runner/workspace/lib/db/src/schema/accounts.ts	2026-07-16 14:13:50.238183437 +0000
+@@ -1,16 +1,29 @@
+ import {
+   index,
+   integer,
++  pgSequence,
+   pgTable,
+   text,
+   timestamp,
++  unique,
+   uniqueIndex,
+   uuid,
+ } from "drizzle-orm/pg-core";
+ import { sql } from "drizzle-orm";
+-import { accountStatusEnum } from "./enums";
++import {
++  accountStatusEnum,
++  accountStatusOverrideEnum,
++} from "./enums";
+ import { gamesTable } from "./games";
+ 
++export const accountCodeSeq = pgSequence("account_code_seq", {
++  startWith: 1,
++  increment: 1,
++  minValue: 1,
++  maxValue: 2147483647,
++  cycle: false,
++});
++
+ export const accountsTable = pgTable(
+   "accounts",
+   {
+@@ -22,25 +35,37 @@
+     // Global account code — ACC-000001, globally unique across all games.
+     accountCode: text("account_code").notNull().unique(),
+ 
+-    // Display number components. Stored separately to allow safe prefix changes.
+-    // displayNumber = "#" + accountNumberPrefix + "-" + padded(accountNumberSeq)
++    // Display number components. The prefix and sequence are immutable after Account creation.
++    // Approved per-game display format: GOW-001 (no leading #).
++    // displayNumber = accountNumberPrefix + "-" + padded(accountNumberSeq)
+     accountNumberPrefix: text("account_number_prefix").notNull(),
+     accountNumberSeq: integer("account_number_seq").notNull(),
+     displayNumber: text("display_number").notNull(),
+ 
+-    // Auth / credentials — sensitive fields use encrypted naming convention.
++    // Legacy credentials — these columns are deprecated and will be removed in a later cleanup stage.
+     // NOTE: actual encryption at rest is NOT implemented in this schema phase.
+-    // These columns hold the ciphertext once encryption middleware is wired up.
+     email: text("email").notNull(),
+     emailNormalized: text("email_normalized").notNull(),
+     playstationPasswordEncrypted: text("playstation_password_encrypted").notNull(),
+     emailPasswordEncrypted: text("email_password_encrypted").notNull(),
+     familyManagementEmailEncrypted: text("family_management_email_encrypted"),
+ 
++    // PS-03C1 additive encrypted-value and keyed lookup-hash columns.
++    // These remain nullable until the runtime cutover stage enforces them.
++    psnEmailEncrypted: text("psn_email_encrypted"),
++    psnEmailLookupHash: text("psn_email_lookup_hash"),
++    psnPasswordEncrypted: text("psn_password_encrypted"),
++    psnPasswordLookupHash: text("psn_password_lookup_hash"),
++    emailPasswordEncryptedV2: text("email_password_encrypted_v2"),
++    emailPasswordLookupHash: text("email_password_lookup_hash"),
++    familyManagementEmailEncryptedV2: text("family_management_email_encrypted_v2"),
++    familyManagementEmailLookupHash: text("family_management_email_lookup_hash"),
++
+     onlineId: text("online_id"),
+     birthDate: text("birth_date"),
+ 
+     status: accountStatusEnum("status").notNull().default("active"),
++    statusOverride: accountStatusOverrideEnum("status_override"),
+     createdAt: timestamp("created_at", { withTimezone: true })
+       .notNull()
+       .defaultNow(),
+@@ -50,13 +75,22 @@
+     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+   },
+   (t) => [
+-    // Partial unique: emailNormalized must be unique among non-deleted accounts.
+-    // Uses a PostgreSQL partial unique index (WHERE deleted_at IS NULL).
+-    // This correctly allows the same email to be reused after soft-delete.
++    // Legacy partial unique index — scheduled for removal in Stage C.
+     uniqueIndex("accounts_email_normalized_active_uniq")
+       .on(t.emailNormalized)
+       .where(sql`${t.deletedAt} IS NULL`),
+ 
++    // Per-game identifier uniqueness.
++    unique("accounts_game_seq_unique").on(t.gameId, t.accountNumberSeq),
++    unique("accounts_game_display_unique").on(t.gameId, t.displayNumber),
++
++    // Non-unique lookup indexes for duplicate-permitted fields.
++    index("accounts_psn_email_lookup_hash_idx").on(t.psnEmailLookupHash),
++    index("accounts_psn_password_lookup_hash_idx").on(t.psnPasswordLookupHash),
++    index("accounts_email_password_lookup_hash_idx").on(t.emailPasswordLookupHash),
++    index("accounts_family_email_lookup_hash_idx").on(t.familyManagementEmailLookupHash),
++    index("accounts_online_id_idx").on(t.onlineId),
++
+     index("accounts_game_id_idx").on(t.gameId),
+     index("accounts_status_idx").on(t.status),
+     index("accounts_deleted_at_idx").on(t.deletedAt),
+--- lib/db/src/schema/account-backup-codes.ts ---
+--- /tmp/ps02b-baseline/lib/db/src/schema/account-backup-codes.ts	2026-07-15 15:47:09.000000000 +0000
++++ /home/runner/workspace/lib/db/src/schema/account-backup-codes.ts	2026-07-16 13:33:53.098183437 +0000
+@@ -1,4 +1,5 @@
+ import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
++import { backupCodeStatusEnum } from "./enums";
+ import { accountsTable } from "./accounts";
+ 
+ export const accountBackupCodesTable = pgTable(
+@@ -8,15 +9,27 @@
+     accountId: uuid("account_id")
+       .notNull()
+       .references(() => accountsTable.id),
++
++    // Legacy encrypted column — deprecated, will be removed in Stage C.
+     // NOTE: actual encryption at rest is NOT implemented in this schema phase.
+     codeEncrypted: text("code_encrypted").notNull(),
+     usedAt: timestamp("used_at", { withTimezone: true }),
++
++    // PS-03C1 additive fields.
++    // Encrypted/ciphertext value and separate keyed lookup hash.
++    codeEncryptedV2: text("code_encrypted_v2"),
++    codeLookupHashV2: text("code_lookup_hash_v2"),
++    // Lifecycle status: AVAILABLE, USED, REVOKED.
++    status: backupCodeStatusEnum("status").notNull().default("AVAILABLE"),
++
+     createdAt: timestamp("created_at", { withTimezone: true })
+       .notNull()
+       .defaultNow(),
+   },
+   (t) => [
+     index("account_backup_codes_account_id_idx").on(t.accountId),
++    index("account_backup_codes_status_idx").on(t.status),
++    index("account_backup_codes_code_lookup_hash_v2_idx").on(t.codeLookupHashV2),
+   ],
+ );
+ 
+--- lib/db/src/schema/account-capacities.ts ---
+--- /tmp/ps02b-baseline/lib/db/src/schema/account-capacities.ts	2026-07-15 15:47:09.000000000 +0000
++++ /home/runner/workspace/lib/db/src/schema/account-capacities.ts	2026-07-16 13:34:22.574183437 +0000
+@@ -1,26 +1,24 @@
+ import {
++  boolean,
++  check,
+   index,
+   integer,
+   pgTable,
+   text,
+   timestamp,
+   unique,
++  uniqueIndex,
+   uuid,
+ } from "drizzle-orm/pg-core";
+-import { capacityKindEnum } from "./enums";
++import { sql } from "drizzle-orm";
++import { capacityKindEnum, capacityKindV2Enum } from "./enums";
+ import { accountsTable } from "./accounts";
+ 
+ /**
+  * Persistent capacity rows — one row per slot per account.
+  *
+- * instanceNo is NOT NULL (required by Commander):
+- *   Z2 PS5 #1  → capacityKind=Z2_PS5, instanceNo=1
+- *   Z2 PS5 #2  → capacityKind=Z2_PS5, instanceNo=2
+- *   Z2 PS4     → capacityKind=Z2_PS4, instanceNo=0
+- *   Z3 PS5     → capacityKind=Z3_PS5, instanceNo=0
+- *
+- * Capacities are created once when an account is registered and are never
+- * auto-regenerated when the game platform changes (Commander decision 10).
++ * Legacy capacityKind uses Z3_PS5. PS-03C1 introduces capacityKindV2 with
++ * Z3_SHARED_PS5_PS4, kept nullable until the runtime cutover stage.
+  */
+ export const accountCapacitiesTable = pgTable(
+   "account_capacities",
+@@ -29,20 +27,37 @@
+     accountId: uuid("account_id")
+       .notNull()
+       .references(() => accountsTable.id),
++    // Legacy capacity kind. Kept during the additive stage.
+     capacityKind: capacityKindEnum("capacity_kind").notNull(),
++    // Versioned capacity kind. Nullable until the runtime cutover stage.
++    capacityKindV2: capacityKindV2Enum("capacity_kind_v2"),
+     instanceNo: integer("instance_no").notNull(),
+     displayLabel: text("display_label").notNull(),
++    // PS-03C1 additive FINISHED state fields.
++    isFinished: boolean("is_finished").notNull().default(false),
++    finishedAt: timestamp("finished_at", { withTimezone: true }),
+     createdAt: timestamp("created_at", { withTimezone: true })
+       .notNull()
+       .defaultNow(),
+   },
+   (t) => [
++    // Legacy unique slot constraint.
+     unique("account_capacities_unique_slot").on(
+       t.accountId,
+       t.capacityKind,
+       t.instanceNo,
+     ),
++    // Future unique slot index for the versioned capacity kind.
++    uniqueIndex("account_capacities_v2_unique_slot")
++      .on(t.accountId, t.capacityKindV2, t.instanceNo)
++      .where(sql`${t.capacityKindV2} IS NOT NULL`),
++    // FINISHED state consistency: indicator and timestamp must agree.
++    check(
++      "account_capacities_finished_consistency",
++      sql`(${t.isFinished} = false AND ${t.finishedAt} IS NULL) OR (${t.isFinished} = true AND ${t.finishedAt} IS NOT NULL)`,
++    ),
+     index("account_capacities_account_id_idx").on(t.accountId),
++    index("account_capacities_is_finished_idx").on(t.isFinished),
+   ],
+ );
+ 
+--- lib/db/src/schema/game-account-sequences.ts ---
+--- /tmp/ps02b-baseline/lib/db/src/schema/game-account-sequences.ts	1970-01-01 00:00:00.000000000 +0000
++++ /home/runner/workspace/lib/db/src/schema/game-account-sequences.ts	2026-07-16 13:33:59.434183437 +0000
+@@ -0,0 +1,36 @@
++import { integer, pgTable, uuid } from "drizzle-orm/pg-core";
++import { gamesTable } from "./games";
++
++/**
++ * Per-game Account sequence counter.
++ *
++ * Allocation pattern (runtime, not implemented in PS-03C1):
++ *   UPDATE game_account_sequences
++ *   SET last_value = last_value + 1
++ *   WHERE game_id = ?
++ *   RETURNING last_value;
++ *
++ * Requirements:
++ *   - keyed by game_id
++ *   - FK to games with ON DELETE NO ACTION / ON UPDATE NO ACTION
++ *   - no MAX + 1
++ *   - no counter reuse after Account deletion
++ *   - no rows are inserted during the migration
++ */
++export const gameAccountSequencesTable = pgTable(
++  "game_account_sequences",
++  {
++    gameId: uuid("game_id")
++      .primaryKey()
++      .references(() => gamesTable.id, {
++        onDelete: "no action",
++        onUpdate: "no action",
++      }),
++    lastValue: integer("last_value").notNull().default(0),
++  },
++);
++
++export type GameAccountSequence =
++  typeof gameAccountSequencesTable.$inferSelect;
++export type InsertGameAccountSequence =
++  typeof gameAccountSequencesTable.$inferInsert;
+--- lib/db/src/schema/index.ts ---
+--- /tmp/ps02b-baseline/lib/db/src/schema/index.ts	2026-07-15 15:47:09.000000000 +0000
++++ /home/runner/workspace/lib/db/src/schema/index.ts	2026-07-16 13:34:00.602183437 +0000
+@@ -4,6 +4,7 @@
+ export * from "./accounts";
+ export * from "./account-backup-codes";
+ export * from "./account-capacities";
++export * from "./game-account-sequences";
+ export * from "./orders";
+ export * from "./capacity-customers";
+ export * from "./audit-logs";
+--- lib/db/src/migrations/ps03c1.test.ts ---
+--- /tmp/ps02b-baseline/lib/db/src/migrations/ps03c1.test.ts	1970-01-01 00:00:00.000000000 +0000
++++ /home/runner/workspace/lib/db/src/migrations/ps03c1.test.ts	2026-07-16 14:14:42.282183437 +0000
+@@ -0,0 +1,868 @@
++import { after, before, describe, test } from "node:test";
++import assert from "node:assert/strict";
++import { execSync } from "node:child_process";
++import { readFileSync } from "node:fs";
++import { fileURLToPath } from "node:url";
++import path from "node:path";
++import crypto from "node:crypto";
++import pg from "pg";
++
++const { Pool } = pg;
++
++const DATABASE_URL = process.env.DATABASE_URL;
++if (!DATABASE_URL) {
++  throw new Error("DATABASE_URL is required for migration tests");
++}
++
++const ACTIVE_DB_NAME = new URL(DATABASE_URL).pathname.slice(1);
++const TEST_DB_NAME = process.env.PS03C1_TEST_DATABASE_URL
++  ? new URL(process.env.PS03C1_TEST_DATABASE_URL).pathname.slice(1)
++  : `ps03c1_test_${crypto.randomUUID().replace(/-/g, "")}`;
++const TEST_DATABASE_URL =
++  process.env.PS03C1_TEST_DATABASE_URL ??
++  DATABASE_URL.replace(/\/[^/]*$/, `/${TEST_DB_NAME}`);
++
++const TEST_DB_PATTERN = /^ps03c1_test_[a-f0-9]{32}$/;
++const ROLLBACK_DB_PATTERN = /^ps03c1_rollback_test_[a-f0-9]{32}$/;
++if (!TEST_DB_PATTERN.test(TEST_DB_NAME)) {
++  throw new Error(
++    `Generated test DB name "${TEST_DB_NAME}" does not match PS03C1 test naming pattern`,
++  );
++}
++if (TEST_DB_NAME === ACTIVE_DB_NAME) {
++  throw new Error(
++    `Refusing to run tests against the active workspace database "${ACTIVE_DB_NAME}"`,
++  );
++}
++
++function databaseUrlForName(baseUrl: string, dbName: string): string {
++  const u = new URL(baseUrl);
++  u.pathname = `/${dbName}`;
++  return u.toString();
++}
++
++function deriveManagementUrl(testUrl: string): string {
++  return databaseUrlForName(testUrl, "postgres");
++}
++
++const MANAGEMENT_DATABASE_URL = process.env.PS03C1_TEST_DATABASE_URL
++  ? deriveManagementUrl(process.env.PS03C1_TEST_DATABASE_URL)
++  : DATABASE_URL;
++
++const DB_DIR = path.resolve(fileURLToPath(import.meta.url), "../../..");
++const ROLLBACK_SQL = path.resolve(
++  fileURLToPath(import.meta.url),
++  "../../../../../reports/ps03c1_rollback.sql",
++);
++const MIGRATION_0000 = path.join(DB_DIR, "migrations", "0000_zippy_leech.sql");
++const MIGRATION_0001 = path.join(DB_DIR, "migrations", "0001_glossy_onslaught.sql");
++const MIGRATION_0002 = path.join(DB_DIR, "migrations", "0002_warm_swarm.sql");
++
++let managementPool: pg.Pool | undefined;
++let testPool: pg.Pool | undefined;
++let testGameCounter = 0;
++
++async function nextGame(client: pg.PoolClient) {
++  testGameCounter += 1;
++  const title = `Test Game ${testGameCounter} ${Date.now()}`;
++  const titleNormalized = `test-game-${testGameCounter}-${Date.now()}`;
++  const result = await client.query(
++    `INSERT INTO games (title, title_normalized, platform)
++     VALUES ($1, $2, 'PS5_ONLY')
++     RETURNING id`,
++    [title, titleNormalized],
++  );
++  return result.rows[0].id as string;
++}
++
++async function insertAccount(
++  client: pg.PoolClient,
++  gameId: string,
++  overrides: Record<string, unknown> = {},
++) {
++  testGameCounter += 1;
++  const seq = testGameCounter;
++  const prefix = (overrides.account_number_prefix as string) ?? "TST";
++  const displayNumber =
++    (overrides.display_number as string) ??
++    `${prefix}-${String(seq).padStart(3, "0")}`;
++  const defaults: Record<string, unknown> = {
++    game_id: gameId,
++    account_code: `ACC-${String(seq).padStart(6, "0")}`,
++    account_number_prefix: prefix,
++    account_number_seq: seq,
++    display_number: displayNumber,
++    email: `email-${seq}@example.com`,
++    email_normalized: `email-${seq}@example.com`,
++    playstation_password_encrypted: `pwd-${seq}`,
++    email_password_encrypted: `email-pwd-${seq}`,
++  };
++  const merged = { ...defaults, ...overrides };
++  const entries = Object.entries(merged);
++  const columns = entries.map(([k]) => k);
++  const values = entries.map(([, v]) => v);
++  const result = await client.query(
++    `INSERT INTO accounts (${columns.join(", ")})
++     VALUES (${values.map((_, i) => `$${i + 1}`).join(", ")})
++     RETURNING id`,
++    values,
++  );
++  return {
++    id: result.rows[0].id as string,
++    accountCode: merged.account_code as string,
++    seq: merged.account_number_seq as number,
++    displayNumber: merged.display_number as string,
++  };
++}
++
++async function insertCapacity(
++  client: pg.PoolClient,
++  accountId: string,
++  overrides: Record<string, unknown> = {},
++) {
++  const instanceNo = (overrides.instance_no as number) ?? 1;
++  const displayLabel =
++    (overrides.display_label as string) ?? `Z2 PS5 #${instanceNo}`;
++  const defaults: Record<string, unknown> = {
++    account_id: accountId,
++    capacity_kind: "Z2_PS5",
++    instance_no: instanceNo,
++    display_label: displayLabel,
++    is_finished: false,
++    finished_at: null,
++  };
++  const merged = { ...defaults, ...overrides };
++  const entries = Object.entries(merged);
++  const columns = entries.map(([k]) => k);
++  const values = entries.map(([, v]) => v);
++  const result = await client.query(
++    `INSERT INTO account_capacities (${columns.join(", ")})
++     VALUES (${values.map((_, i) => `$${i + 1}`).join(", ")})
++     RETURNING id`,
++    values,
++  );
++  return result.rows[0].id as string;
++}
++
++async function insertBackupCode(
++  client: pg.PoolClient,
++  accountId: string,
++  overrides: Record<string, unknown> = {},
++) {
++  const defaults: Record<string, unknown> = {
++    account_id: accountId,
++    code_encrypted: `legacy-code-${testGameCounter}`,
++    status: "AVAILABLE",
++  };
++  const merged = { ...defaults, ...overrides };
++  const entries = Object.entries(merged);
++  const columns = entries.map(([k]) => k);
++  const values = entries.map(([, v]) => v);
++  const result = await client.query(
++    `INSERT INTO account_backup_codes (${columns.join(", ")})
++     VALUES (${values.map((_, i) => `$${i + 1}`).join(", ")})
++     RETURNING id`,
++    values,
++  );
++  return result.rows[0].id as string;
++}
++
++async function incrementGameCounter(
++  client: pg.PoolClient,
++  gameId: string,
++): Promise<number> {
++  const res = await client.query(
++    `INSERT INTO game_account_sequences (game_id, last_value)
++     VALUES ($1, 1)
++     ON CONFLICT (game_id)
++     DO UPDATE SET last_value = game_account_sequences.last_value + 1
++     RETURNING last_value`,
++    [gameId],
++  );
++  return Number(res.rows[0].last_value);
++}
++
++async function captureSchema(client: pg.PoolClient) {
++  const tables = await client.query(
++    `SELECT table_name, column_name, data_type, is_nullable, column_default
++     FROM information_schema.columns
++     WHERE table_schema = 'public'
++     ORDER BY table_name, ordinal_position`,
++  );
++  const constraints = await client.query(
++    `SELECT conname, conrelid::regclass::text AS table_name, contype, pg_get_constraintdef(oid) AS definition
++     FROM pg_constraint
++     WHERE connamespace = 'public'::regnamespace
++     ORDER BY conname`,
++  );
++  const indexes = await client.query(
++    `SELECT indexname, tablename, indexdef
++     FROM pg_indexes
++     WHERE schemaname = 'public'
++     ORDER BY indexname`,
++  );
++  const triggers = await client.query(
++    `SELECT tgname, tgrelid::regclass::text AS table_name
++     FROM pg_trigger
++     WHERE NOT tgisinternal
++     ORDER BY tgname`,
++  );
++  const functions = await client.query(
++    `SELECT proname, pg_get_function_arguments(oid) AS args
++     FROM pg_proc
++     WHERE pronamespace = 'public'::regnamespace
++     ORDER BY proname`,
++  );
++  const sequences = await client.query(
++    `SELECT sequencename
++     FROM pg_sequences
++     WHERE schemaname = 'public'
++     ORDER BY sequencename`,
++  );
++  const enums = await client.query(
++    `SELECT t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder) AS values
++     FROM pg_type t
++     JOIN pg_enum e ON t.oid = e.enumtypid
++     WHERE t.typnamespace = 'public'::regnamespace
++     GROUP BY t.typname
++     ORDER BY t.typname`,
++  );
++  return { tables, constraints, indexes, triggers, functions, sequences, enums };
++}
++
++async function applySqlFile(client: pg.PoolClient, filePath: string) {
++  const sql = readFileSync(filePath, "utf-8");
++  const statements = sql
++    .split("--> statement-breakpoint")
++    .map((s) => s.trim())
++    .filter((s) => s.length > 0);
++  for (const stmt of statements) {
++    await client.query(stmt);
++  }
++}
++
++async function applySqlText(client: pg.PoolClient, sql: string) {
++  const statements = sql
++    .split("\n")
++    .map((s) => s.trim())
++    .filter((s) => s.length > 0 && !s.startsWith("--"))
++    .map((s) => (s.endsWith(";") ? s : `${s};`));
++  for (const stmt of statements) {
++    await client.query(stmt);
++  }
++}
++
++before(async () => {
++  managementPool = new Pool({ connectionString: MANAGEMENT_DATABASE_URL });
++  await managementPool.query(`DROP DATABASE IF EXISTS ${TEST_DB_NAME};`);
++  await managementPool.query(`CREATE DATABASE ${TEST_DB_NAME};`);
++
++  execSync("pnpm run db:migrate", {
++    cwd: DB_DIR,
++    env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL },
++    stdio: "pipe",
++  });
++
++  testPool = new Pool({ connectionString: TEST_DATABASE_URL });
++});
++
++after(async () => {
++  await testPool?.end();
++  if (TEST_DB_PATTERN.test(TEST_DB_NAME)) {
++    await managementPool?.query(`DROP DATABASE IF EXISTS ${TEST_DB_NAME};`);
++  }
++  await managementPool?.end();
++});
++
++describe("PS-03C1 additive schema", { concurrency: false }, () => {
++  test("disposable database is not the active workspace database", async () => {
++    const client = await testPool!.connect();
++    try {
++      const res = await client.query("SELECT current_database()");
++      assert.notEqual(res.rows[0].current_database, ACTIVE_DB_NAME);
++      assert.equal(res.rows[0].current_database, TEST_DB_NAME);
++    } finally {
++      client.release();
++    }
++  });
++
++  test("disposable migration history matches expected hashes", async () => {
++    const client = await testPool!.connect();
++    try {
++      const res = await client.query(
++        `SELECT id, hash FROM drizzle.__drizzle_migrations ORDER BY id`,
++      );
++      assert.equal(res.rows.length, 3);
++      assert.equal(Number(res.rows[0].id), 1);
++      assert.equal(
++        res.rows[0].hash,
++        "a43ab14cacf73a107d5c115c2025dc56de3537efe4d409ca65c79e48a8aa07ca",
++      );
++      assert.equal(Number(res.rows[1].id), 2);
++      assert.equal(
++        res.rows[1].hash,
++        "c09f28b3895fa3ee2732f42438d55e4ad136a02d485386bfe001c4530d14c4c2",
++      );
++      assert.equal(Number(res.rows[2].id), 3);
++      assert.equal(
++        res.rows[2].hash,
++        "99f124e4bb93a8763d485813a65355c44e4a0aa4a1a6b4eb8ddffc47e3059b6a",
++      );
++    } finally {
++      client.release();
++    }
++  });
++
++  test("global account_code sequence produces increasing non-reused values", async () => {
++    const client = await testPool!.connect();
++    try {
++      const res1 = await client.query("SELECT nextval('account_code_seq') AS v");
++      const res2 = await client.query("SELECT nextval('account_code_seq') AS v");
++      const res3 = await client.query("SELECT nextval('account_code_seq') AS v");
++      const v1 = Number(res1.rows[0].v);
++      const v2 = Number(res2.rows[0].v);
++      const v3 = Number(res3.rows[0].v);
++      assert.equal(v2, v1 + 1);
++      assert.equal(v3, v2 + 1);
++    } finally {
++      client.release();
++    }
++  });
++
++  test("rolled-back transaction does not reuse a global sequence value", async () => {
++    const client = await testPool!.connect();
++    try {
++      await client.query("BEGIN");
++      const res = await client.query("SELECT nextval('account_code_seq') AS v");
++      const rolledBack = Number(res.rows[0].v);
++      await client.query("ROLLBACK");
++
++      const res2 = await client.query("SELECT nextval('account_code_seq') AS v");
++      const nextVal = Number(res2.rows[0].v);
++      assert.ok(nextVal > rolledBack);
++    } finally {
++      client.release();
++    }
++  });
++
++  test("per-game counter allocation increments atomically", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      await client.query(
++        `INSERT INTO game_account_sequences (game_id, last_value) VALUES ($1, 0)`,
++        [gameId],
++      );
++      const first = await incrementGameCounter(client, gameId);
++      const second = await incrementGameCounter(client, gameId);
++      assert.equal(first, 1);
++      assert.equal(second, 2);
++    } finally {
++      client.release();
++    }
++  });
++
++  test("concurrent per-game counter allocations produce distinct sequential values", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      await client.query(
++        `INSERT INTO game_account_sequences (game_id, last_value) VALUES ($1, 0)`,
++        [gameId],
++      );
++      const cA = await testPool!.connect();
++      const cB = await testPool!.connect();
++      try {
++        async function allocate(client: pg.PoolClient, id: string): Promise<number> {
++          await client.query("BEGIN");
++          const v = await incrementGameCounter(client, id);
++          await client.query("COMMIT");
++          return v;
++        }
++        const [vA, vB] = await Promise.all([
++          allocate(cA, gameId),
++          allocate(cB, gameId),
++        ]);
++        assert.notEqual(vA, vB);
++        const set = new Set([vA, vB]);
++        assert.equal(set.size, 2);
++        const final = await client.query(
++          `SELECT last_value FROM game_account_sequences WHERE game_id = $1`,
++          [gameId],
++        );
++        assert.equal(Number(final.rows[0].last_value), 2);
++      } finally {
++        cA.release();
++        cB.release();
++      }
++    } finally {
++      client.release();
++    }
++  });
++
++  test("different Games have independent per-game counters", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameA = await nextGame(client);
++      const gameB = await nextGame(client);
++      await client.query(
++        `INSERT INTO game_account_sequences (game_id, last_value) VALUES ($1, 5)`,
++        [gameA],
++      );
++      const resA = await client.query(
++        `SELECT last_value FROM game_account_sequences WHERE game_id = $1`,
++        [gameA],
++      );
++      const resB = await client.query(
++        `SELECT last_value FROM game_account_sequences WHERE game_id = $1`,
++        [gameB],
++      );
++      assert.equal(Number(resA.rows[0].last_value), 5);
++      assert.equal(resB.rows[0], undefined);
++    } finally {
++      client.release();
++    }
++  });
++
++  test("deleting an Account does not reset or reuse its per-game sequence number", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      await client.query(
++        `INSERT INTO game_account_sequences (game_id, last_value) VALUES ($1, 0)`,
++        [gameId],
++      );
++      const first = await incrementGameCounter(client, gameId);
++      const account = await insertAccount(client, gameId);
++      await client.query(`DELETE FROM accounts WHERE id = $1`, [account.id]);
++      const second = await incrementGameCounter(client, gameId);
++      assert.equal(first, 1);
++      assert.equal(second, 2);
++    } finally {
++      client.release();
++    }
++  });
++
++  test("concurrent first per-game counter allocations when no row exists", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      const cA = await testPool!.connect();
++      const cB = await testPool!.connect();
++      try {
++        async function allocate(otherClient: pg.PoolClient, id: string): Promise<number> {
++          await otherClient.query("BEGIN");
++          const v = await incrementGameCounter(otherClient, id);
++          await otherClient.query("COMMIT");
++          return v;
++        }
++        const [vA, vB] = await Promise.all([
++          allocate(cA, gameId),
++          allocate(cB, gameId),
++        ]);
++        assert.notEqual(vA, vB);
++        const set = new Set([vA, vB]);
++        assert.equal(set.size, 2);
++        const final = await client.query(
++          `SELECT last_value FROM game_account_sequences WHERE game_id = $1`,
++          [gameId],
++        );
++        assert.equal(Number(final.rows[0].last_value), 2);
++      } finally {
++        cA.release();
++        cB.release();
++      }
++    } finally {
++      client.release();
++    }
++  });
++
++  test("two different Games begin per-game counters independently", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameA = await nextGame(client);
++      const gameB = await nextGame(client);
++      const vA = await incrementGameCounter(client, gameA);
++      const vB = await incrementGameCounter(client, gameB);
++      assert.equal(vA, 1);
++      assert.equal(vB, 1);
++      const resA = await client.query(
++        `SELECT last_value FROM game_account_sequences WHERE game_id = $1`,
++        [gameA],
++      );
++      const resB = await client.query(
++        `SELECT last_value FROM game_account_sequences WHERE game_id = $1`,
++        [gameB],
++      );
++      assert.equal(Number(resA.rows[0].last_value), 1);
++      assert.equal(Number(resB.rows[0].last_value), 1);
++    } finally {
++      client.release();
++    }
++  });
++
++  test("deleted Account with allocated sequence does not reuse its per-game sequence number", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      const first = await incrementGameCounter(client, gameId);
++      const account = await insertAccount(client, gameId, {
++        account_number_seq: first,
++        display_number: `TST-${String(first).padStart(3, "0")}`,
++      });
++      await client.query(`DELETE FROM accounts WHERE id = $1`, [account.id]);
++      const second = await incrementGameCounter(client, gameId);
++      assert.equal(first, 1);
++      assert.equal(second, 2);
++      assert.notEqual(second, first);
++    } finally {
++      client.release();
++    }
++  });
++
++  test("unique (game_id, account_number_seq) is enforced", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      await insertAccount(client, gameId, { account_number_seq: 42 });
++      await assert.rejects(
++        insertAccount(client, gameId, { account_number_seq: 42 }),
++        /unique constraint/,
++      );
++    } finally {
++      client.release();
++    }
++  });
++
++  test("unique (game_id, display_number) is enforced", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      const prefix = "SHR";
++      const seq = 99;
++      await insertAccount(client, gameId, {
++        account_number_prefix: prefix,
++        account_number_seq: seq,
++        display_number: `${prefix}-${String(seq).padStart(3, "0")}`,
++      });
++      await assert.rejects(
++        insertAccount(client, gameId, {
++          account_number_prefix: prefix,
++          account_number_seq: seq + 1,
++          display_number: `${prefix}-${String(seq).padStart(3, "0")}`,
++        }),
++        /unique constraint/,
++      );
++    } finally {
++      client.release();
++    }
++  });
++
++  test("duplicate PSN Email lookup hashes remain allowed", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      const hash = "psn-email-hash-dup";
++      await insertAccount(client, gameId, { psn_email_lookup_hash: hash });
++      await insertAccount(client, gameId, { psn_email_lookup_hash: hash });
++      const res = await client.query(
++        `SELECT count(*) FROM accounts WHERE psn_email_lookup_hash = $1`,
++        [hash],
++      );
++      assert.equal(Number(res.rows[0].count), 2);
++    } finally {
++      client.release();
++    }
++  });
++
++  test("duplicate Family Management Email lookup hashes remain allowed", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      const hash = "family-email-hash-dup";
++      await insertAccount(client, gameId, {
++        family_management_email_lookup_hash: hash,
++      });
++      await insertAccount(client, gameId, {
++        family_management_email_lookup_hash: hash,
++      });
++      const res = await client.query(
++        `SELECT count(*) FROM accounts WHERE family_management_email_lookup_hash = $1`,
++        [hash],
++      );
++      assert.equal(Number(res.rows[0].count), 2);
++    } finally {
++      client.release();
++    }
++  });
++
++  test("duplicate Online ID values remain allowed", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      const onlineId = "online-id-dup";
++      await insertAccount(client, gameId, { online_id: onlineId });
++      await insertAccount(client, gameId, { online_id: onlineId });
++      const res = await client.query(
++        `SELECT count(*) FROM accounts WHERE online_id = $1`,
++        [onlineId],
++      );
++      assert.equal(Number(res.rows[0].count), 2);
++    } finally {
++      client.release();
++    }
++  });
++
++  test("identifier update trigger blocks actual identifier changes", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      const { id } = await insertAccount(client, gameId);
++      await assert.rejects(
++        client.query(
++          `UPDATE accounts SET account_code = 'ACC-999999' WHERE id = $1`,
++          [id],
++        ),
++        /Account identifiers are immutable/,
++      );
++    } finally {
++      client.release();
++    }
++  });
++
++  test("identifier update trigger permits unrelated Account updates", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      const { id } = await insertAccount(client, gameId);
++      await client.query(
++        `UPDATE accounts SET status = 'disabled' WHERE id = $1`,
++        [id],
++      );
++      const res = await client.query(
++        `SELECT status FROM accounts WHERE id = $1`,
++        [id],
++      );
++      assert.equal(res.rows[0].status, "disabled");
++    } finally {
++      client.release();
++    }
++  });
++
++  test("identifier update trigger permits identical-value updates", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      const { id, accountCode } = await insertAccount(client, gameId);
++      await client.query(
++        `UPDATE accounts SET account_code = $1 WHERE id = $2`,
++        [accountCode, id],
++      );
++      const res = await client.query(
++        `SELECT account_code FROM accounts WHERE id = $1`,
++        [id],
++      );
++      assert.equal(res.rows[0].account_code, accountCode);
++    } finally {
++      client.release();
++    }
++  });
++
++  test("Capacity FINISHED consistency accepts valid states", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      const { id: accountId } = await insertAccount(client, gameId);
++      const id1 = await insertCapacity(client, accountId, {
++        is_finished: false,
++        finished_at: null,
++      });
++      const id2 = await insertCapacity(client, accountId, {
++        instance_no: 2,
++        display_label: "Z2 PS5 #2",
++        is_finished: true,
++        finished_at: new Date().toISOString(),
++      });
++      assert.ok(id1);
++      assert.ok(id2);
++    } finally {
++      client.release();
++    }
++  });
++
++  test("Capacity FINISHED consistency rejects contradictory states", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      const { id: accountId } = await insertAccount(client, gameId);
++      await assert.rejects(
++        insertCapacity(client, accountId, {
++          is_finished: true,
++          finished_at: null,
++        }),
++        /check constraint/,
++      );
++      await assert.rejects(
++        insertCapacity(client, accountId, {
++          instance_no: 2,
++          display_label: "Z2 PS5 #2",
++          is_finished: false,
++          finished_at: new Date().toISOString(),
++        }),
++        /check constraint/,
++      );
++    } finally {
++      client.release();
++    }
++  });
++
++  test("Backup Code lifecycle enum accepts only approved values", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      const { id: accountId } = await insertAccount(client, gameId);
++      await insertBackupCode(client, accountId, { status: "AVAILABLE" });
++      await insertBackupCode(client, accountId, { status: "USED" });
++      await insertBackupCode(client, accountId, { status: "REVOKED" });
++      await assert.rejects(
++        insertBackupCode(client, accountId, { status: "INVALID" }),
++        /invalid input value/,
++      );
++    } finally {
++      client.release();
++    }
++  });
++
++  test("manual Account override accepts only SOLD, INACTIVE or NULL", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      const { id: idSold } = await insertAccount(client, gameId, {
++        status_override: "SOLD",
++      });
++      const { id: idInactive } = await insertAccount(client, gameId, {
++        status_override: "INACTIVE",
++      });
++      const { id: idNull } = await insertAccount(client, gameId);
++      await assert.rejects(
++        insertAccount(client, gameId, { status_override: "AVAILABLE" }),
++        /invalid input value/,
++      );
++      const sold = await client.query(
++        `SELECT status_override FROM accounts WHERE id = $1`,
++        [idSold],
++      );
++      const inactive = await client.query(
++        `SELECT status_override FROM accounts WHERE id = $1`,
++        [idInactive],
++      );
++      const nullOverride = await client.query(
++        `SELECT status_override FROM accounts WHERE id = $1`,
++        [idNull],
++      );
++      assert.equal(sold.rows[0].status_override, "SOLD");
++      assert.equal(inactive.rows[0].status_override, "INACTIVE");
++      assert.equal(nullOverride.rows[0].status_override, null);
++    } finally {
++      client.release();
++    }
++  });
++
++  test("new shared Z3 representation accepts Z3_SHARED_PS5_PS4", async () => {
++    const client = await testPool!.connect();
++    try {
++      const gameId = await nextGame(client);
++      const { id: accountId } = await insertAccount(client, gameId);
++      const id = await insertCapacity(client, accountId, {
++        capacity_kind_v2: "Z3_SHARED_PS5_PS4",
++      });
++      assert.ok(id);
++    } finally {
++      client.release();
++    }
++  });
++
++  test("legacy columns and enum values remain present", async () => {
++    const client = await testPool!.connect();
++    try {
++      const cols = await client.query(
++        `SELECT column_name FROM information_schema.columns
++         WHERE table_schema = 'public' AND table_name = 'accounts'
++         ORDER BY column_name`,
++      );
++      const names = cols.rows.map((r) => r.column_name);
++      assert.ok(names.includes("email"));
++      assert.ok(names.includes("email_normalized"));
++      assert.ok(names.includes("status"));
++      assert.ok(names.includes("family_management_email_encrypted"));
++
++      const enums = await client.query(
++        `SELECT e.enumlabel FROM pg_type t
++         JOIN pg_enum e ON t.oid = e.enumtypid
++         WHERE t.typname = 'account_status'`,
++      );
++      const values = enums.rows.map((r) => r.enumlabel);
++      assert.ok(values.includes("active"));
++      assert.ok(values.includes("disabled"));
++
++      const capacityEnums = await client.query(
++        `SELECT e.enumlabel FROM pg_type t
++         JOIN pg_enum e ON t.oid = e.enumtypid
++         WHERE t.typname = 'capacity_kind'`,
++      );
++      const capacityValues = capacityEnums.rows.map((r) => r.enumlabel);
++      assert.ok(capacityValues.includes("Z3_PS5"));
++    } finally {
++      client.release();
++    }
++  });
++
++  test("rollback restores schema to post-0001 state", async () => {
++    const rollbackDbName = `ps03c1_rollback_test_${crypto
++      .randomUUID()
++      .replace(/-/g, "")}`;
++    if (rollbackDbName === ACTIVE_DB_NAME) {
++      throw new Error("Rollback DB name collides with active DB");
++    }
++    if (!ROLLBACK_DB_PATTERN.test(rollbackDbName)) {
++      throw new Error(
++        "Rollback DB name does not match PS03C1 rollback test pattern",
++      );
++    }
++    const rollbackDbUrl = databaseUrlForName(TEST_DATABASE_URL, rollbackDbName);
++
++    await managementPool!.query(`DROP DATABASE IF EXISTS ${rollbackDbName};`);
++    await managementPool!.query(`CREATE DATABASE ${rollbackDbName};`);
++
++    const rollbackPool = new Pool({ connectionString: rollbackDbUrl });
++    const rollbackClient = await rollbackPool.connect();
++    let post0001: Awaited<ReturnType<typeof captureSchema>>;
++    let postRollback: Awaited<ReturnType<typeof captureSchema>>;
++    try {
++      // 1. Apply 0000 and 0001 directly to reach a post-0001 baseline.
++      await applySqlFile(rollbackClient, MIGRATION_0000);
++      await applySqlFile(rollbackClient, MIGRATION_0001);
++      post0001 = await captureSchema(rollbackClient);
++
++      // 2. Apply 0002.
++      await applySqlFile(rollbackClient, MIGRATION_0002);
++
++      // 3. Execute the rollback plan.
++      const rollbackSql = readFileSync(ROLLBACK_SQL, "utf-8");
++      await applySqlText(rollbackClient, rollbackSql);
++
++      postRollback = await captureSchema(rollbackClient);
++    } finally {
++      rollbackClient.release();
++      await rollbackPool.end();
++      await managementPool!.query(
++        `DROP DATABASE IF EXISTS ${rollbackDbName};`,
++      );
++    }
++
++    const diff = JSON.stringify(post0001) === JSON.stringify(postRollback);
++    if (!diff) {
++      assert.deepEqual(postRollback, post0001);
++    }
++  });
++});
+--- reports/ps03c1_rollback.sql ---
+--- /tmp/ps02b-baseline/reports/ps03c1_rollback.sql	1970-01-01 00:00:00.000000000 +0000
++++ /home/runner/workspace/reports/ps03c1_rollback.sql	2026-07-16 14:13:57.150183437 +0000
+@@ -0,0 +1,61 @@
++-- PS-03C1 rollback plan for migration 0002_warm_swarm.sql
++-- ==========================================================================
++-- DISPOSABLE DATABASE ONLY.
++-- DO NOT execute this file against the active Replit database.
++-- Migration 0002 remains recorded in the live Drizzle history; this file does
++-- NOT delete or modify any live migration-history row.
++-- Any future live schema reversal must be implemented as a separately approved
++-- forward corrective migration. The 0002 migration file must never be edited or
++-- removed.
++-- ==========================================================================
++-- Removes only objects introduced by PS-03C1 in safe reverse dependency order.
++
++-- 1. Identifier immutability trigger and function.
++DROP TRIGGER IF EXISTS "accounts_protect_identifiers_trigger" ON "public"."accounts";
++DROP FUNCTION IF EXISTS "public"."accounts_protect_identifiers_fn"();
++
++-- 2. New indexes introduced by PS-03C1.
++DROP INDEX IF EXISTS "public"."account_capacities_v2_unique_slot";
++DROP INDEX IF EXISTS "public"."account_capacities_is_finished_idx";
++DROP INDEX IF EXISTS "public"."account_backup_codes_code_lookup_hash_v2_idx";
++DROP INDEX IF EXISTS "public"."account_backup_codes_status_idx";
++DROP INDEX IF EXISTS "public"."accounts_online_id_idx";
++DROP INDEX IF EXISTS "public"."accounts_family_email_lookup_hash_idx";
++DROP INDEX IF EXISTS "public"."accounts_email_password_lookup_hash_idx";
++DROP INDEX IF EXISTS "public"."accounts_psn_password_lookup_hash_idx";
++DROP INDEX IF EXISTS "public"."accounts_psn_email_lookup_hash_idx";
++
++-- 3. New unique and check constraints introduced by PS-03C1.
++ALTER TABLE "public"."account_capacities" DROP CONSTRAINT IF EXISTS "account_capacities_finished_consistency";
++ALTER TABLE "public"."accounts" DROP CONSTRAINT IF EXISTS "accounts_game_display_unique";
++ALTER TABLE "public"."accounts" DROP CONSTRAINT IF EXISTS "accounts_game_seq_unique";
++
++-- 4. New columns introduced by PS-03C1.
++ALTER TABLE "public"."account_capacities" DROP COLUMN IF EXISTS "finished_at";
++ALTER TABLE "public"."account_capacities" DROP COLUMN IF EXISTS "is_finished";
++ALTER TABLE "public"."account_capacities" DROP COLUMN IF EXISTS "capacity_kind_v2";
++
++ALTER TABLE "public"."account_backup_codes" DROP COLUMN IF EXISTS "status";
++ALTER TABLE "public"."account_backup_codes" DROP COLUMN IF EXISTS "code_lookup_hash_v2";
++ALTER TABLE "public"."account_backup_codes" DROP COLUMN IF EXISTS "code_encrypted_v2";
++
++ALTER TABLE "public"."accounts" DROP COLUMN IF EXISTS "status_override";
++ALTER TABLE "public"."accounts" DROP COLUMN IF EXISTS "family_management_email_lookup_hash";
++ALTER TABLE "public"."accounts" DROP COLUMN IF EXISTS "family_management_email_encrypted_v2";
++ALTER TABLE "public"."accounts" DROP COLUMN IF EXISTS "email_password_lookup_hash";
++ALTER TABLE "public"."accounts" DROP COLUMN IF EXISTS "email_password_encrypted_v2";
++ALTER TABLE "public"."accounts" DROP COLUMN IF EXISTS "psn_password_lookup_hash";
++ALTER TABLE "public"."accounts" DROP COLUMN IF EXISTS "psn_password_encrypted";
++ALTER TABLE "public"."accounts" DROP COLUMN IF EXISTS "psn_email_lookup_hash";
++ALTER TABLE "public"."accounts" DROP COLUMN IF EXISTS "psn_email_encrypted";
++
++-- 5. New table introduced by PS-03C1.
++DROP TABLE IF EXISTS "public"."game_account_sequences";
++
++-- 6. New sequence introduced by PS-03C1.
++DROP SEQUENCE IF EXISTS "public"."account_code_seq";
++
++-- 7. New enums introduced by PS-03C1.
++DROP TYPE IF EXISTS "public"."capacity_kind_v2";
++DROP TYPE IF EXISTS "public"."backup_code_status";
++DROP TYPE IF EXISTS "public"."account_status_override";

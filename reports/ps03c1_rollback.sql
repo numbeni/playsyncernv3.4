@@ -1,6 +1,14 @@
 -- PS-03C1 rollback plan for migration 0002_warm_swarm.sql
+-- ==========================================================================
+-- DISPOSABLE DATABASE ONLY.
+-- DO NOT execute this file against the active Replit database.
+-- Migration 0002 remains recorded in the live Drizzle history; this file does
+-- NOT delete or modify any live migration-history row.
+-- Any future live schema reversal must be implemented as a separately approved
+-- forward corrective migration. The 0002 migration file must never be edited or
+-- removed.
+-- ==========================================================================
 -- Removes only objects introduced by PS-03C1 in safe reverse dependency order.
--- Do not run against the active Replit database. Use only on an isolated disposable database.
 
 -- 1. Identifier immutability trigger and function.
 DROP TRIGGER IF EXISTS "accounts_protect_identifiers_trigger" ON "public"."accounts";

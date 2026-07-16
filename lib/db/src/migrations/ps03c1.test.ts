@@ -35,6 +35,20 @@ if (TEST_DB_NAME === ACTIVE_DB_NAME) {
   );
 }
 
+function databaseUrlForName(baseUrl: string, dbName: string): string {
+  const u = new URL(baseUrl);
+  u.pathname = `/${dbName}`;
+  return u.toString();
+}
+
+function deriveManagementUrl(testUrl: string): string {
+  return databaseUrlForName(testUrl, "postgres");
+}
+
+const MANAGEMENT_DATABASE_URL = process.env.PS03C1_TEST_DATABASE_URL
+  ? deriveManagementUrl(process.env.PS03C1_TEST_DATABASE_URL)
+  : DATABASE_URL;
+
 const DB_DIR = path.resolve(fileURLToPath(import.meta.url), "../../..");
 const ROLLBACK_SQL = path.resolve(
   fileURLToPath(import.meta.url),
@@ -158,9 +172,10 @@ async function incrementGameCounter(
   gameId: string,
 ): Promise<number> {
   const res = await client.query(
-    `UPDATE game_account_sequences
-     SET last_value = last_value + 1
-     WHERE game_id = $1
+    `INSERT INTO game_account_sequences (game_id, last_value)
+     VALUES ($1, 1)
+     ON CONFLICT (game_id)
+     DO UPDATE SET last_value = game_account_sequences.last_value + 1
      RETURNING last_value`,
     [gameId],
   );
@@ -238,7 +253,7 @@ async function applySqlText(client: pg.PoolClient, sql: string) {
 }
 
 before(async () => {
-  managementPool = new Pool({ connectionString: DATABASE_URL });
+  managementPool = new Pool({ connectionString: MANAGEMENT_DATABASE_URL });
   await managementPool.query(`DROP DATABASE IF EXISTS ${TEST_DB_NAME};`);
   await managementPool.query(`CREATE DATABASE ${TEST_DB_NAME};`);
 
@@ -266,6 +281,33 @@ describe("PS-03C1 additive schema", { concurrency: false }, () => {
       const res = await client.query("SELECT current_database()");
       assert.notEqual(res.rows[0].current_database, ACTIVE_DB_NAME);
       assert.equal(res.rows[0].current_database, TEST_DB_NAME);
+    } finally {
+      client.release();
+    }
+  });
+
+  test("disposable migration history matches expected hashes", async () => {
+    const client = await testPool!.connect();
+    try {
+      const res = await client.query(
+        `SELECT id, hash FROM drizzle.__drizzle_migrations ORDER BY id`,
+      );
+      assert.equal(res.rows.length, 3);
+      assert.equal(Number(res.rows[0].id), 1);
+      assert.equal(
+        res.rows[0].hash,
+        "a43ab14cacf73a107d5c115c2025dc56de3537efe4d409ca65c79e48a8aa07ca",
+      );
+      assert.equal(Number(res.rows[1].id), 2);
+      assert.equal(
+        res.rows[1].hash,
+        "c09f28b3895fa3ee2732f42438d55e4ad136a02d485386bfe001c4530d14c4c2",
+      );
+      assert.equal(Number(res.rows[2].id), 3);
+      assert.equal(
+        res.rows[2].hash,
+        "99f124e4bb93a8763d485813a65355c44e4a0aa4a1a6b4eb8ddffc47e3059b6a",
+      );
     } finally {
       client.release();
     }
@@ -396,6 +438,83 @@ describe("PS-03C1 additive schema", { concurrency: false }, () => {
       const second = await incrementGameCounter(client, gameId);
       assert.equal(first, 1);
       assert.equal(second, 2);
+    } finally {
+      client.release();
+    }
+  });
+
+  test("concurrent first per-game counter allocations when no row exists", async () => {
+    const client = await testPool!.connect();
+    try {
+      const gameId = await nextGame(client);
+      const cA = await testPool!.connect();
+      const cB = await testPool!.connect();
+      try {
+        async function allocate(otherClient: pg.PoolClient, id: string): Promise<number> {
+          await otherClient.query("BEGIN");
+          const v = await incrementGameCounter(otherClient, id);
+          await otherClient.query("COMMIT");
+          return v;
+        }
+        const [vA, vB] = await Promise.all([
+          allocate(cA, gameId),
+          allocate(cB, gameId),
+        ]);
+        assert.notEqual(vA, vB);
+        const set = new Set([vA, vB]);
+        assert.equal(set.size, 2);
+        const final = await client.query(
+          `SELECT last_value FROM game_account_sequences WHERE game_id = $1`,
+          [gameId],
+        );
+        assert.equal(Number(final.rows[0].last_value), 2);
+      } finally {
+        cA.release();
+        cB.release();
+      }
+    } finally {
+      client.release();
+    }
+  });
+
+  test("two different Games begin per-game counters independently", async () => {
+    const client = await testPool!.connect();
+    try {
+      const gameA = await nextGame(client);
+      const gameB = await nextGame(client);
+      const vA = await incrementGameCounter(client, gameA);
+      const vB = await incrementGameCounter(client, gameB);
+      assert.equal(vA, 1);
+      assert.equal(vB, 1);
+      const resA = await client.query(
+        `SELECT last_value FROM game_account_sequences WHERE game_id = $1`,
+        [gameA],
+      );
+      const resB = await client.query(
+        `SELECT last_value FROM game_account_sequences WHERE game_id = $1`,
+        [gameB],
+      );
+      assert.equal(Number(resA.rows[0].last_value), 1);
+      assert.equal(Number(resB.rows[0].last_value), 1);
+    } finally {
+      client.release();
+    }
+  });
+
+  test("deleted Account with allocated sequence does not reuse its per-game sequence number", async () => {
+    const client = await testPool!.connect();
+    try {
+      const gameId = await nextGame(client);
+      const first = await incrementGameCounter(client, gameId);
+      const account = await insertAccount(client, gameId, {
+        account_number_seq: first,
+        display_number: `TST-${String(first).padStart(3, "0")}`,
+      });
+      await client.query(`DELETE FROM accounts WHERE id = $1`, [account.id]);
+      const second = await incrementGameCounter(client, gameId);
+      assert.equal(first, 1);
+      assert.equal(second, 2);
+      assert.notEqual(second, first);
     } finally {
       client.release();
     }
@@ -710,10 +829,7 @@ describe("PS-03C1 additive schema", { concurrency: false }, () => {
         "Rollback DB name does not match PS03C1 rollback test pattern",
       );
     }
-    const rollbackDbUrl = DATABASE_URL.replace(
-      /\/[^/]*$/,
-      `/${rollbackDbName}`,
-    );
+    const rollbackDbUrl = databaseUrlForName(TEST_DATABASE_URL, rollbackDbName);
 
     await managementPool!.query(`DROP DATABASE IF EXISTS ${rollbackDbName};`);
     await managementPool!.query(`CREATE DATABASE ${rollbackDbName};`);

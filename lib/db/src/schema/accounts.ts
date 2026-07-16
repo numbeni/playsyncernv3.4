@@ -35,7 +35,7 @@ export const accountsTable = pgTable(
     // Global account code — ACC-000001, globally unique across all games.
     accountCode: text("account_code").notNull().unique(),
 
-    // Display number components. Stored separately to allow safe prefix changes.
+    // Display number components. The prefix and sequence are immutable after Account creation.
     // Approved per-game display format: GOW-001 (no leading #).
     // displayNumber = accountNumberPrefix + "-" + padded(accountNumberSeq)
     accountNumberPrefix: text("account_number_prefix").notNull(),
