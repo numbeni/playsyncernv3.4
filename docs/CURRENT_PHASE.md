@@ -4,173 +4,90 @@
 
 PS-03 — Accounts Backend and Frontend Integration
 
+## Previous Completed Stage
+
+PS-03B — Account Contract Decision Gate
+
+## Previous Stage Status
+
+APPROVED_AND_CLOSED
+
 ## Current Stage
 
-PS-03A — Accounts Contract and Current Source Audit
+PS-03C0 — Live Database Evidence and Migration Readiness
 
-## Status
+## Current Status
 
-READY_FOR_READ_ONLY_AUDIT
+READY_FOR_READ_ONLY_DB_EVIDENCE
 
 ## Input Baseline
 
-Canonical previous-phase package:
+Previous completed phase:
+
+PS-02B — Games Frontend API Integration and Mock Authority Removal
+
+Canonical package:
 
 - File: `playsyncer-ps02b-final.zip`
 - SHA-256: `d6a61547e1a61a7660278f2ed699cabe20eb57c21364c75543a3649773b80135`
 
-PS-02B is completed and must not be reopened or modified without a separate Command Center decision.
+## Approved Account Contract
 
-## Previous Completed Phase
+The PS-03B decisions D1 through D13 are approved and authoritative for Account Core.
 
-PS-02B — Games Frontend API Integration and Mock Authority Removal
+These decisions define:
 
-Confirmed previous-phase state:
-
-- Games are loaded from the real Backend API.
-- Create, Edit, Status Change and Delete persist through PostgreSQL.
-- Games mock data is no longer Runtime Authority.
-- Game Detail displays real Game metadata.
-- Account Workspace remains intentionally pending.
-- SmartSearch currently searches only Games.
-- Legacy Account, Capacity and Customer mock data is preserved only as a non-runtime fixture.
+- Account statuses
+- immutable Account identifiers
+- duplicate-field confirmation
+- encryption and lookup hashes
+- safe DTO boundaries
+- Backup Code lifecycle
+- Capacity templates
+- Capacity FINISHED state
+- Customer Assignment boundary
+- Account deletion and retention
+- OpenAPI authority
+- frontend integration order
+- exact-search limitations
 
 ## Current Objective
 
-Inspect the complete current Account implementation and determine the exact gap between:
+Collect read-only evidence from the active Replit PostgreSQL database before designing or executing any Account migration.
 
-- the approved PlaySyncer Source of Truth
-- the current PostgreSQL schema
-- the existing Account backend routes and services
-- the OpenAPI contract
-- generated API clients
-- the current frontend Account Workspace
-- the preserved legacy fixture
-- the approved security requirements
+The evidence must determine:
 
-PS-03A is strictly read-only.
+- active database identity and environment
+- applied migration history
+- live Account-related schema
+- current table and row counts
+- existing enums, indexes, constraints and foreign keys
+- whether Account-related records exist
+- null and duplicate readiness
+- possible legacy plaintext-sensitive data risk
+- blockers for an additive Account migration
 
-Its purpose is to establish the correct Account Data Contract and produce a controlled execution plan for the remaining PS-03 stages.
+## Restrictions
 
-## Required Audit Scope
+During PS-03C0:
 
-Inspect at minimum:
-
-- Account database table
-- Account Backup Codes table
-- Account Capacity table
-- Capacity Customer Assignment records
-- Account number generation
-- Account status and lifecycle
-- Account-to-Game relationship
-- Game Platform and Account Capacity-template relationship
-- foreign keys and delete behavior
-- indexes and unique constraints
-- soft-delete and historical-data behavior
-- sensitive fields and current encryption state
-- email and PlayStation credentials
-- Family Management information
-- Online ID
-- birth date
-- Backup Codes
-- OpenAPI Account schemas
-- generated API client
-- Account backend routes and services
-- existing Account tests
-- Account Workspace frontend page
-- Account cards and dialogs
-- legacy fixture at `fixtures/legacy/playSyncerMockData.ts`
-- current SmartSearch Account dependencies
-- package scripts
-- migration history
-- database readiness assumptions
-
-## Sensitive Data Rule
-
-Do not expose, copy, log or use real Account credentials.
-
-Do not include real:
-
-- emails
-- passwords
-- Backup Codes
-- customer phone numbers
-- order identifiers
-- tokens
-- connection strings
-
-Use only synthetic or redacted examples.
-
-Any field name containing `Encrypted` must not be assumed to be encrypted without direct implementation evidence.
-
-## Stage A Restrictions
-
-During PS-03A:
-
-- do not modify source files
-- do not create a patch
+- do not modify runtime source
+- do not create or edit migrations
 - do not run migrations
 - do not use `drizzle-kit push`
-- do not modify the database
-- do not generate or insert test Accounts
-- do not change OpenAPI
-- do not regenerate clients
-- do not restore the legacy fixture into Runtime
+- do not insert, update or delete database records
+- do not expose actual emails, passwords, Backup Codes or phone numbers
 - do not implement Account CRUD
-- do not implement Capacity operations
-- do not refactor Account Workspace
-- do not add dependencies
+- do not change OpenAPI
+- do not regenerate API clients
+- do not activate Secret Reveal
+- do not implement Customer Assignment
+- do not start the next stage
 
-## Required Stage A Report
+Only read-only database metadata, counts, constraints and boolean risk checks are authorized.
 
-Return:
+## Next Gate
 
-1. Facts
-2. Assumptions
-3. Risks
-4. Conflicts
-5. Current Account data model
-6. Current Account database contract
-7. Current Account API contract
-8. Current frontend Account data flow
-9. Legacy fixture dependency map
-10. Sensitive-data and encryption review
-11. Account-number generation review
-12. Backup-Code model review
-13. Capacity-template and Platform-rule review
-14. Customer-assignment model review
-15. Delete and history-retention review
-16. Migration and database readiness review
-17. Existing test coverage
-18. Missing test coverage
-19. Source-of-Truth conflicts
-20. Minimal recommended PS-03 stage breakdown
-21. File-level implementation plan
-22. Validation plan
-23. Rollback plan
-24. Blockers and missing evidence
+Review and approval of the PS-03C0 live database evidence report.
 
-## Out of Scope
-
-- implementation during Stage A
-- WordPress Connector
-- WooCommerce Orders
-- Game JSON Import
-- SmartSearch backend implementation
-- Authentication
-- OTP
-- Staff Management
-- RBAC
-- Issue Tracking
-- Payments and Payroll
-- Dashboard redesign
-- broad architecture refactor
-- new dependencies
-
-## Completion Rule
-
-PS-03A completes only when the current Account implementation has been directly inspected and a controlled PS-03 execution plan has been reviewed by the Accounts Command Center.
-
-Do not mark PS-03 or Account Integration completed.
-
-The next PS-03 stage requires explicit approval.
+No Account migration or implementation may begin until this gate is approved.

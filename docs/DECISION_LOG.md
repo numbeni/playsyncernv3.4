@@ -350,3 +350,170 @@ This fixture is historical and non-runtime. It is not authoritative and must not
 The purpose of PS-03A is to reconcile the approved Source of Truth with the current schema, backend, frontend and security implementation, then propose the controlled PS-03 execution stages.
 
 The WordPress Connector remains deferred until the core Account and Capacity flow is completed.
+
+## 2026-07-16 — PS-03B Account Contract Decision Gate Closure
+
+PS-03B — Account Contract Decision Gate has been reviewed, approved and closed.
+
+This stage was decision-only.
+
+No runtime source, migration, database, OpenAPI, generated-client or frontend implementation change was authorized or performed as part of PS-03B.
+
+### Approved Decisions
+
+#### D1 — Account Status Model
+
+Account statuses are:
+
+- `AVAILABLE`
+- `PARTIALLY_SOLD`
+- `SOLD`
+- `INACTIVE`
+
+`AVAILABLE` and `PARTIALLY_SOLD` are derived from Capacity and Assignment state.
+
+`SOLD` and `INACTIVE` are manual persisted overrides.
+
+`FINISHED` belongs exclusively to Capacity state and is not an Account status.
+
+#### D2 — Account Identifiers
+
+Global `accountCode` and the per-game display number become immutable after Account creation.
+
+Identifier allocation must:
+
+- be concurrency-safe
+- use independent non-reusing sequences
+- never use `MAX + 1`
+- never reuse identifiers belonging to deleted Accounts
+
+#### D3 — Duplicate Fields
+
+Duplicate values are permitted for:
+
+- PSN Email
+- Online ID
+- Family Management Email
+
+The Backend must return a duplicate warning.
+
+Create or update may proceed only after explicit confirmation from the caller.
+
+#### D4 — Encryption and Lookup Scope
+
+The following values must be encrypted at rest:
+
+- PSN Email
+- PSN Password
+- Email Password
+- Family Management Email
+- Backup Codes
+- Customer Phone
+
+Exact normalized search and duplicate detection must use separate keyed lookup hashes.
+
+Searchable plaintext credentials must not be stored.
+
+#### D5 — Secret DTO and Reveal Policy
+
+Generic Account DTOs must never include Secrets.
+
+A separate Secret Reveal contract may be designed.
+
+Runtime Reveal must remain disabled until the following exist and are verified:
+
+- Authentication
+- RBAC
+- permission checks
+- actor-based Audit Logging
+
+#### D6 — Backup Codes
+
+Each Backup Code must be stored as an independent encrypted record.
+
+Allowed Backup Code statuses are:
+
+- `AVAILABLE`
+- `USED`
+- `REVOKED`
+
+Each Backup Code must have its own lookup hash.
+
+Account creation requires at least one Backup Code.
+
+#### D7 — Capacity Templates
+
+Capacity rows are generated automatically from the approved Game Platform template.
+
+Manual creation or deletion of Capacity rows is prohibited.
+
+Z3 is shared between PS5 and PS4 according to the canonical Capacity template.
+
+#### D8 — Capacity Completion
+
+`FINISHED` is a manual, persisted and reversible Capacity state.
+
+Finish and unfinish operations require authorization and actor-based Audit Logging before Runtime activation.
+
+#### D9 — Customer Assignment Boundary
+
+Customer Assignment remains outside Account Core.
+
+The current `capacity_customers` structure must not become the final canonical Assignment contract.
+
+Customer Assignment integration remains blocked until the Assignment and Fulfillment Unit model is approved.
+
+#### D10 — Account Deletion and Retention
+
+An Account with no current or historical Assignment may be hard-deleted through an authorized transactional workflow.
+
+An Account with Assignment history must retain that history and may only be changed to `INACTIVE`.
+
+#### D11 — API Authority
+
+OpenAPI schemas and safe DTO boundaries are the authoritative Account API contract.
+
+Backend routes and generated clients must conform to OpenAPI before frontend mutation integration.
+
+#### D12 — Frontend Integration Order
+
+Account Workspace integration must begin as read-only.
+
+The following operations must be introduced only in later controlled stages:
+
+- Create
+- Update
+- Disable
+- Delete
+- Capacity operations
+- Secret Reveal
+
+#### D13 — Search Model
+
+Exact Account Core search through normalized keyed lookup hashes is approved.
+
+Partial search over encrypted PSN Email or Family Management Email must not use:
+
+- plaintext
+- ordinary hashes
+- unapproved searchable copies
+
+Partial encrypted-field search remains deferred until a secure indexed-search design is separately approved.
+
+### Stage Boundary
+
+PS-03B does not authorize:
+
+- migrations
+- schema changes
+- database writes
+- Account CRUD implementation
+- Customer Assignment integration
+- Secret Reveal activation
+- commencement of another implementation stage
+
+The next authorized stage is:
+
+PS-03C0 — Live Database Evidence and Migration Readiness
+
+PS-03C0 is strictly read-only.

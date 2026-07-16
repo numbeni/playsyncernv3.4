@@ -1,0 +1,115 @@
+Execute only PS-03C0 — Live Database Evidence and Migration Readiness.
+
+This stage is strictly read-only.
+
+Use the active DATABASE_URL already configured in this Replit workspace.
+
+Required work:
+
+1. Verify the active database environment without exposing DATABASE_URL, host credentials, passwords, tokens, or connection strings.
+
+Report only safe metadata such as:
+
+- PostgreSQL version
+- current database name
+- current user
+- current schema
+- whether the connection is SSL
+- whether this appears to be the development/workspace database or deployment database, if this can be proven
+
+2. Inspect the applied Drizzle migration history.
+
+Read the live migration table and compare it with the repository migration files:
+
+- 0000_zippy_leech.sql
+- 0001_glossy_onslaught.sql
+
+Do not run or modify migrations.
+
+3. Inspect the live Account-related schema for:
+
+- accounts
+- account_backup_codes
+- account_capacities
+- capacity_customers
+- games
+- orders
+
+Report:
+
+- whether each table exists
+- row counts
+- columns and nullability
+- enums
+- indexes
+- unique constraints
+- check constraints
+- foreign keys
+- ON DELETE and ON UPDATE behavior
+
+4. Collect only aggregate readiness evidence:
+
+- null counts for fields expected to become required
+- duplicate counts for accountCode
+- duplicate counts for per-game account sequence/display number
+- duplicate normalized email groups
+- orphan counts
+- Account counts by current status
+- Capacity counts by current capacity kind
+- counts of PS4-only Accounts missing the expected Shared Z3
+- counts of Customer Assignment records
+
+5. Assess legacy plaintext-sensitive-data risk using aggregate boolean/count checks only.
+
+Never return actual:
+
+- emails
+- passwords
+- Family Management emails
+- Backup Codes
+- customer phone numbers
+- order identifiers
+- credentials
+- ciphertext values
+
+Do not use SELECT * on sensitive tables.
+
+6. Compare the live schema with:
+
+- current Drizzle schema
+- migration files
+- approved PS-03B decisions D1 through D13
+
+7. Produce:
+
+- Facts
+- Database identity evidence
+- Applied migration evidence
+- Table and row counts
+- Schema drift
+- Constraint readiness
+- Aggregate plaintext-risk findings
+- Migration blockers
+- recommended additive migration sequence
+- final verdict for PS-03C0
+
+Restrictions:
+
+- no INSERT
+- no UPDATE
+- no DELETE
+- no DDL
+- no migration execution
+- no drizzle-kit push
+- no schema-file changes
+- no runtime-code changes
+- no synthetic data
+- no Account CRUD
+- no Secret Reveal
+- no Customer Assignment integration
+
+Use an explicit read-only transaction where practical.
+
+Do not modify documentation during this execution.
+
+Stop after returning the sanitized evidence report.
