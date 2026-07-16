@@ -1,0 +1,242 @@
+Continue only:
+
+PS-03C2A — Controlled Corrections and Games Create Regression Fix
+
+Do not start PS-03C2B.
+Do not create or apply migration 0003.
+Do not modify migrations 0000, 0001 or 0002.
+Do not modify the live database schema.
+Do not enable Account writes, Secret Reveal, Authentication, RBAC, OpenAPI, generated clients or Customer Assignment.
+
+First inspect the current source and identify the exact root cause of every issue below. Do not guess.
+
+---
+
+# 1. Fix the Game creation regression
+
+Observed behavior:
+
+In the “Add New Game” modal, a valid title such as `gta` is entered, a valid platform and status are selected, but after clicking “Add Game” the UI displays:
+
+بازی مورد نظر یافت نشد
+
+This message is incorrect for a Game creation request.
+
+Inspect the complete flow:
+
+- frontend form submit handler
+- mutation request URL and HTTP method
+- API base path
+- POST `/games` route
+- response status and response body
+- returned Game ID
+- cache invalidation/refetch logic
+- any automatic navigation or follow-up GET request
+- frontend API-error mapping
+
+Determine whether the 404 is returned by:
+
+- the POST request itself
+- an incorrect route
+- a follow-up request using a missing or incorrect Game ID
+- stale cache/refetch behavior
+- incorrect interpretation of another API error
+
+Required behavior:
+
+- submitting valid Game data creates exactly one Game
+- the modal closes only after successful creation
+- the Games list refreshes and displays the created Game
+- no incorrect “Game not found” message is shown
+- 404 is used only when an existing Game ID genuinely does not exist
+- duplicate title returns the correct duplicate/conflict message
+- validation errors display the correct validation message
+- the submit button is disabled while the request is pending
+- repeated clicks must not create duplicate requests
+- on failure, entered form values remain available for correction
+
+Do not solve the issue by hiding the error message or hard-coding a successful response.
+
+Add or update tests covering:
+
+- successful Game creation
+- created Game appears in the list
+- duplicate title handling
+- failed creation does not close the modal
+- no duplicate request during pending submission
+- create flow never maps a normal POST failure to “Game not found” incorrectly
+
+Preserve all existing Games behavior.
+
+---
+
+# 2. Correct the PS-03C2B retirement inventory
+
+The current inventory incorrectly lists these final objects as legacy retirement candidates:
+
+- `accounts.status_override`
+- `account_status_override`
+
+They are part of the approved final Account contract and must be preserved.
+
+Only these legacy status objects may later be retired:
+
+- `accounts.status`
+- `accounts_status_idx`
+- legacy `account_status` enum containing `active` / `disabled`
+
+Update:
+
+reports/ps03c2b_retirement_inventory.md
+
+Clearly mark `status_override` and `account_status_override` as final retained objects.
+
+Do not change the database schema.
+
+---
+
+# 3. Correct Shared Z3 definitions for PS4_ONLY
+
+The approved capacity templates are:
+
+PS5_ONLY:
+- Z2_PS5 #1
+- Z2_PS5 #2
+- Z3_SHARED_PS5_PS4
+
+PS4_ONLY:
+- Z2_PS4
+- Z3_SHARED_PS5_PS4
+
+PS4_AND_PS5:
+- Z2_PS5 #1
+- Z2_PS5 #2
+- Z2_PS4
+- Z3_SHARED_PS5_PS4
+
+Correct:
+
+lib/db/src/helpers/capacity-definitions.ts
+
+The PS4_ONLY definition must include `Z3_SHARED_PS5_PS4`.
+
+Account creation remains disabled, so do not enable runtime capacity creation.
+
+Add or update helper tests for all three platform templates.
+
+---
+
+# 4. Remove the remaining Games test dependency on legacy Account columns
+
+The current `seedAccountForGame()` fixture in:
+
+artifacts/api-server/src/routes/games.test.ts
+
+still hard-codes legacy fields such as:
+
+- email
+- email_normalized
+- playstation_password_encrypted
+- email_password_encrypted
+
+This would break when migration 0003 removes those columns.
+
+Refactor the test fixture so the Games guard tests can survive both:
+
+- the current post-0002 schema
+- the future post-0003 schema
+
+Use a small test-only compatibility fixture. It may inspect available database columns and conditionally include temporary legacy-required values while they still exist.
+
+Requirements:
+
+- no production Runtime behavior is added
+- no live database data is written
+- no legacy field is exposed through DTOs
+- after migration 0003 removes legacy columns, the fixture must continue working without another conceptual rewrite
+- use only synthetic non-sensitive values in disposable test databases
+
+Do not weaken or remove Games guard tests.
+
+---
+
+# 5. Preserve the simplified Backup Code decision
+
+The final Backup Code contract remains:
+
+- id
+- account_id
+- code_ciphertext
+- created_at
+
+Runtime must not depend on:
+
+- lookup hash
+- status
+- AVAILABLE / USED / REVOKED
+- used_at
+- lifecycle logic
+
+Generic Account DTOs must never return Backup Codes.
+
+Do not modify the database schema in this stage. Fields introduced by migration 0002 remain physically present until migration 0003 removes them.
+
+Confirm the documentation and retirement inventory reflect this decision.
+
+---
+
+# 6. Required checks
+
+Run:
+
+- `pnpm run typecheck`
+- `pnpm --filter @workspace/api-server run test`
+- `pnpm --filter @workspace/db run test`
+- `pnpm --filter @workspace/db run test:migrations`
+- `PORT=24351 BASE_PATH=/ pnpm --filter @workspace/playsyncer run build`
+
+Also run the relevant frontend tests for the Game creation flow if such a test command exists.
+
+Do not claim PASS without successful exit codes.
+
+---
+
+# 7. Prove no migration or live database change
+
+Confirm:
+
+- migrations 0000, 0001 and 0002 retain their approved hashes
+- migration 0003 does not exist
+- no migration was executed
+- no file under `lib/db/migrations` or migration metadata changed
+- Account-related live tables remain empty
+- `capacity_customers` remains unchanged
+- Account POST, PATCH, DELETE and secret-bearing GET-detail routes remain fail-closed
+
+Use a read-only transaction for live verification and finish with `ROLLBACK`.
+
+---
+
+# 8. Required artifacts
+
+Update or create:
+
+- `reports/ps03c2a_correction_report.md`
+- `reports/ps03c2a_corrected_complete.diff`
+- `reports/ps03c2b_retirement_inventory.md`
+
+The corrected diff must include new and untracked files, especially:
+
+- `accounts.disabled.test.ts`
+- frontend Game creation changes/tests
+- Games test fixture changes
+- Shared Z3 helper changes
+- retirement inventory corrections
+
+Final status:
+
+PS-03C2A — CORRECTED, AWAITING COMMAND CENTER REVIEW
+
+Do not approve or close PS-03C2A automatically.
+Do not start migration 0003.
+Stop after returning the evidence report and artifacts.

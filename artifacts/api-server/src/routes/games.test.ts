@@ -30,28 +30,84 @@ function nextSeed(): string {
 }
 
 /**
+ * Compatibility helper: returns the list of columns currently present in the
+ * `accounts` table. This lets the test fixture survive both the post-0002
+ * schema (which still has legacy NOT NULL columns) and the future post-0003
+ * schema (which will drop them). No production code uses this.
+ */
+function getAccountColumns(databaseUrl: string): string[] {
+  const sql = `
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_name = 'accounts' AND table_schema = 'public'
+    ORDER BY ordinal_position;
+  `;
+  const output = execSync(`psql "${databaseUrl}" -At -c "${sql}"`, {
+    encoding: "utf-8",
+  });
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+/**
  * Seed a minimal Account row directly in the test database so Game guard tests
- * can exercise the "accounts exist for this game" branch. Dummy values are
- * supplied for the legacy credential columns that migration 0003 will remove.
- * This is the only remaining test coupling to those legacy columns and is
- * listed as a PS-03C2B retirement blocker.
+ * can exercise the "accounts exist for this game" branch.
+ *
+ * The fixture inspects the actual `accounts` columns and only supplies synthetic
+ * values for legacy credential columns while they still exist (post-0002). Once
+ * migration 0003 removes those columns, the same INSERT will continue to work
+ * without a rewrite. All values are disposable, non-sensitive test data.
  */
 function seedAccountForGame(
   databaseUrl: string,
   gameId: string,
 ): { id: string } {
   const seed = nextSeed();
+  const columns = getAccountColumns(databaseUrl);
+
+  const baseColumns = [
+    "game_id",
+    "account_code",
+    "account_number_prefix",
+    "account_number_seq",
+    "display_number",
+  ];
+
+  const legacyColumns = [
+    "email",
+    "email_normalized",
+    "playstation_password_encrypted",
+    "email_password_encrypted",
+  ];
+
+  const presentLegacyColumns = legacyColumns.filter((col) =>
+    columns.includes(col),
+  );
+  const insertColumns = [...baseColumns, ...presentLegacyColumns];
+
+  const values = [
+    `'${gameId}'`,
+    `'ACC-${seed}'`,
+    `'SEED'`,
+    `${seedCounter}`,
+    `'SEED-${seed}'`,
+    ...presentLegacyColumns.map((col) =>
+      col === "email" || col === "email_normalized"
+        ? `'seed-${seed}@example.com'`
+        : `'x'`,
+    ),
+  ];
+
   const sql = `
     INSERT INTO "accounts" (
-      "game_id", "account_code", "account_number_prefix", "account_number_seq",
-      "display_number", "email", "email_normalized",
-      "playstation_password_encrypted", "email_password_encrypted"
+      ${insertColumns.map((col) => `"${col}"`).join(", ")}
     ) VALUES (
-      '${gameId}', 'ACC-${seed}', 'SEED', ${seedCounter},
-      'SEED-${seed}', 'seed-${seed}@example.com', 'seed-${seed}@example.com',
-      'x', 'x'
+      ${values.join(", ")}
     ) RETURNING "id";
   `;
+
   const output = execSync(`psql "${databaseUrl}" -c "${sql}"`, {
     encoding: "utf-8",
   });
@@ -139,7 +195,7 @@ describe("Games API", () => {
     return { res, data: (await res.json()) as { ok: boolean } | ErrorResponse };
   }
 
-  it("creates a game successfully", async () => {
+  it("creates a game successfully and returns a valid game id", async () => {
     const { res, data } = await createGame("FC 26", "PS5_ONLY");
     assert.strictEqual(res.status, 201);
     const game = assertGame(data);
@@ -147,6 +203,46 @@ describe("Games API", () => {
     assert.strictEqual(game.titleNormalized, "fc 26");
     assert.strictEqual(game.platform, "PS5_ONLY");
     assert.strictEqual(game.status, "ACTIVE");
+
+    // The returned game id must be a valid UUID and the game must be
+    // retrievable; a follow-up 404 here would mean the create path is broken.
+    const getRes = await fetch(`${baseUrl}/games/${game.id}`);
+    assert.strictEqual(getRes.status, 200);
+    const getData = (await getRes.json()) as GameResponse;
+    assert.strictEqual(getData.game.id, game.id);
+  });
+
+  it("created game appears in the games list", async () => {
+    const { data: createData } = await createGame("Listable Game", "PS5_ONLY");
+    const created = assertGame(createData);
+
+    const res = await fetch(`${baseUrl}/games`);
+    const data = (await res.json()) as { games: { id: string; title: string }[] };
+    assert.strictEqual(res.status, 200);
+    const found = data.games.find((g) => g.id === created.id);
+    assert.ok(found, "created game should appear in the list");
+    assert.strictEqual(found.title, "Listable Game");
+  });
+
+  it("POST /games never returns 404 for normal creation failures", async () => {
+    // Validation failure must be 400, not 404.
+    const whitespaceRes = await fetch(`${baseUrl}/games`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "   ", platform: "PS5_ONLY" }),
+    });
+    assert.notStrictEqual(whitespaceRes.status, 404);
+    assert.strictEqual(whitespaceRes.status, 400);
+
+    // Duplicate conflict must be 409, not 404.
+    await createGame("Unique For 404 Check", "PS5_ONLY");
+    const duplicateRes = await fetch(`${baseUrl}/games`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Unique For 404 Check", platform: "PS4_ONLY" }),
+    });
+    assert.notStrictEqual(duplicateRes.status, 404);
+    assert.strictEqual(duplicateRes.status, 409);
   });
 
   it("rejects duplicate normalized titles", async () => {

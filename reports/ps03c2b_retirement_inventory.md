@@ -10,17 +10,22 @@
 | `accounts.email_normalized` | column | Normalized plaintext email. |
 | `accounts_email_normalized_active_uniq` | partial unique index | ON `email_normalized` WHERE `deleted_at IS NULL`. |
 
-## 2. Legacy Account status column, index, and enums
+## 2. Legacy Account status column, index, and enum
 
 | Object | Kind | Notes |
 |--------|------|-------|
 | `accounts.status` | column | `account_status` enum (`active`, `disabled`). |
-| `accounts.status_override` | column | `account_status_override` enum (`SOLD`, `INACTIVE`). |
 | `account_status` | enum | Legacy active/disabled status. |
-| `account_status_override` | enum | Manual override values. |
 | `accounts_status_idx` | index | ON `status`. |
 
-## 3. Legacy password / family-email columns
+## 3. Final Account status objects that must NOT be retired
+
+| Object | Kind | Notes |
+|--------|------|-------|
+| `accounts.status_override` | column | `account_status_override` enum (`SOLD`, `INACTIVE`). Part of the approved final Account contract. |
+| `account_status_override` | enum | Manual override values. Part of the approved final Account contract. |
+
+## 4. Legacy password / family-email columns
 
 | Object | Kind | Notes |
 |--------|------|-------|
@@ -28,7 +33,7 @@
 | `accounts.email_password_encrypted` | column | Legacy email password value. |
 | `accounts.family_management_email_encrypted` | column | Legacy family-management email value. |
 
-## 4. Legacy Capacity kind column, enum, constraint, and value
+## 5. Legacy Capacity kind column, enum, constraint, and value
 
 | Object | Kind | Notes |
 |--------|------|-------|
@@ -39,15 +44,15 @@
 
 After retirement, `capacity_kind_v2` (enum `capacity_kind_v2` with `Z3_SHARED_PS5_PS4`) becomes the canonical column and `account_capacities_v2_unique_slot` becomes the active unique index.
 
-## 5. Obsolete Backup Code value and lifecycle columns
+## 6. Obsolete Backup Code value and lifecycle columns
 
-### 5.1 Value field to become canonical ciphertext
+### 6.1 Value field to become canonical ciphertext
 
 | Object | Kind | Notes |
 |--------|------|-------|
 | `account_backup_codes.code_encrypted` | column | Legacy value column; migration 0003 should rename/replace to `code_ciphertext` and keep it as the single storage field. |
 
-### 5.2 Fields superseded by the storage-only decision
+### 6.2 Fields superseded by the storage-only decision
 
 | Object | Kind | Notes |
 |--------|------|-------|
@@ -61,23 +66,25 @@ After retirement, `capacity_kind_v2` (enum `capacity_kind_v2` with `Z3_SHARED_PS
 
 After retirement, the authoritative Backup Code contract is `id`, `account_id`, `code_ciphertext`, `created_at`.
 
-## 6. Objects that are final and should NOT be retired
+## 7. Objects that are final and should NOT be retired
 
 | Object | Reason |
 |--------|--------|
 | `game_account_sequences` | Already final: `last_value` is `NOT NULL` with default `0`, FK is `NO ACTION`. |
 | `capacity_customers` | Explicitly out of scope for Account Core. |
+| `accounts.status_override` | Approved final Account contract field. |
+| `account_status_override` | Approved final Account contract enum. |
 
-## 7. Remaining Runtime/test coupling that still blocks retirement
+## 8. Remaining Runtime/test coupling that still blocks retirement
 
 | Location | Coupling | Action required in PS-03C2B or a follow-up stage |
 |----------|----------|---------------------------------------------------|
-| `artifacts/api-server/src/routes/games.test.ts` `seedAccountForGame()` | Inserts dummy values into `email`, `email_normalized`, `playstation_password_encrypted`, `email_password_encrypted` to satisfy the test DB's `NOT NULL` constraints. | Rewrite the test fixture once those columns are removed or made nullable. |
+| `artifacts/api-server/src/routes/games.test.ts` `seedAccountForGame()` | Inserts dummy values into legacy credential columns that migration 0003 will remove. | The fixture now inspects the post-0002 schema and only supplies temporary legacy-required values while those columns still exist. After 0003 the fixture will continue working without another rewrite. |
 | `lib/db/src/migrations/ps03c1.test.ts` | Frozen PS-03C1 baseline test asserts the existence of legacy columns and `Z3_PS5` after 0002. | Keep as the 0002 baseline; add a new PS-03C2B migration test that verifies the post-0003 schema. |
 | `fixtures/legacy/playSyncerMockData.ts` | Contains `Z3_PS5` and legacy Account mock fields (email, password, backupCodes). | Update or remove when the frontend is integrated with the Account backend. |
 | `artifacts/playsyncer/src/domain/slots/types.ts` | `SlotType` still includes `Z3_PS5`. | Update when frontend integrates with the canonical `Z3_SHARED_PS5_PS4` capacity model. |
 
-## 8. Notes for migration 0003 design
+## 9. Notes for migration 0003 design
 
 - All Account-related tables are empty in the live database, so destructive schema changes are safe.
 - `capacity_customers` must remain untouched.

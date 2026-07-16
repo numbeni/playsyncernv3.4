@@ -17,6 +17,7 @@
  *
  *   PS4_ONLY:
  *     Z2 PS4              (capacityKind=Z2_PS4, instanceNo=0)
+ *     Z3 Shared PS5/PS4  (capacityKind=Z3_SHARED_PS5_PS4, instanceNo=0)
  *
  * instanceNo is always NOT NULL (Commander decision 3):
  *   - Z2_PS5 slots use 1-based instanceNo to distinguish #1 / #2.
@@ -67,6 +68,11 @@ export function buildCapacityDefinitions(
     case "PS4_ONLY":
       return [
         { capacityKind: "Z2_PS4", instanceNo: 0, displayLabel: "Z2 PS4" },
+        {
+          capacityKind: "Z3_SHARED_PS5_PS4",
+          instanceNo: 0,
+          displayLabel: "Z3 Shared PS5/PS4",
+        },
       ];
   }
 }
