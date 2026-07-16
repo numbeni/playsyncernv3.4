@@ -1,0 +1,852 @@
+diff --git a/artifacts/api-server/src/lib/dto.ts b/artifacts/api-server/src/lib/dto.ts
+index 0ef2b74..883990d 100644
+--- a/artifacts/api-server/src/lib/dto.ts
++++ b/artifacts/api-server/src/lib/dto.ts
+@@ -1,29 +1,54 @@
+-import type { accountsTable } from "@workspace/db";
++import type { Account } from "@workspace/db";
+ 
+ /**
+- * Strip sensitive encrypted columns before returning an account to any caller.
++ * Non-secret subset of an Account returned by generic API responses.
+  *
+- * NOTE: actual encryption is not yet wired — these columns currently hold
+- * plaintext during development. They must NEVER be returned in API responses
+- * until a proper authz layer is in place.
++ * Excludes all legacy credential columns, all encrypted/lookup-hash columns,
++ * all email and family-management secrets, all password fields, all Backup
++ * Codes, and the legacy active/disabled status columns.
++ */
++export interface SafeAccount {
++  id: string;
++  gameId: string;
++  accountCode: string;
++  accountNumberPrefix: string;
++  accountNumberSeq: number;
++  displayNumber: string;
++  onlineId: string | null;
++  birthDate: string | null;
++  createdAt: Date;
++  updatedAt: Date;
++}
++
++/**
++ * Authoritative storage-only Backup Code contract.
+  *
+- * The three omitted fields can be surfaced on a dedicated, auth-gated
+- * "reveal credentials" endpoint in a future phase.
++ * PlaySyncer will not validate, consume, search, lifecycle-track, hash, or
++ * reveal Backup Codes in this stage. The DB column currently storing the value
++ * is `code_encrypted`; migration 0003 will rename it to `code_ciphertext` in
++ * PS-03C2B.
++ */
++export interface BackupCodeStorage {
++  id: string;
++  accountId: string;
++  codeCiphertext: string;
++  createdAt: Date;
++}
++
++/**
++ * Strip all secret and legacy fields before returning an Account to any caller.
+  */
+-export function toSafeAccount(
+-  a: typeof accountsTable.$inferSelect,
+-): Omit<
+-  typeof accountsTable.$inferSelect,
+-  | "playstationPasswordEncrypted"
+-  | "emailPasswordEncrypted"
+-  | "familyManagementEmailEncrypted"
+-> {
+-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+-  const {
+-    playstationPasswordEncrypted,
+-    emailPasswordEncrypted,
+-    familyManagementEmailEncrypted,
+-    ...safe
+-  } = a;
+-  return safe;
++export function toSafeAccount(a: Account): SafeAccount {
++  return {
++    id: a.id,
++    gameId: a.gameId,
++    accountCode: a.accountCode,
++    accountNumberPrefix: a.accountNumberPrefix,
++    accountNumberSeq: a.accountNumberSeq,
++    displayNumber: a.displayNumber,
++    onlineId: a.onlineId ?? null,
++    birthDate: a.birthDate ?? null,
++    createdAt: a.createdAt,
++    updatedAt: a.updatedAt,
++  };
+ }
+diff --git a/artifacts/api-server/src/routes/accounts.concurrency.test.ts b/artifacts/api-server/src/routes/accounts.concurrency.test.ts
+deleted file mode 100644
+index 6d2c079..0000000
+--- a/artifacts/api-server/src/routes/accounts.concurrency.test.ts
++++ /dev/null
+@@ -1,179 +0,0 @@
+-import { describe, it, before, after } from "node:test";
+-import assert from "node:assert";
+-import pg from "pg";
+-import { startTestPg } from "../lib/test-pg.ts";
+-
+-describe("Account creation / Game platform row locking", () => {
+-  let databaseUrl: string;
+-  let stopPg: () => Promise<void>;
+-  let pool: pg.Pool;
+-
+-  before(async () => {
+-    const { databaseUrl: dbUrl, stop: stopPgFn } = await startTestPg();
+-    databaseUrl = dbUrl;
+-    stopPg = stopPgFn;
+-
+-    // Connect directly to the disposable test database so the controlled
+-    // locking test uses two real PostgreSQL connections.
+-    pool = new pg.Pool({ connectionString: databaseUrl });
+-  });
+-
+-  after(async () => {
+-    await pool.end();
+-    await stopPg();
+-  });
+-
+-  it("serializes account creation and game platform change on the game row", async () => {
+-    const clientA = await pool.connect();
+-    const clientB = await pool.connect();
+-
+-    try {
+-      // Seed a PS4_ONLY game.
+-      const { rows: [game] } = await clientA.query(
+-        `INSERT INTO "games" ("title", "title_normalized", "platform", "status")
+-         VALUES ('Lock Test', 'lock test', 'PS4_ONLY', 'ACTIVE')
+-         RETURNING "id"`,
+-      );
+-      const gameId = game.id;
+-
+-      // Client A starts a transaction and locks the Game row.
+-      await clientA.query("BEGIN");
+-      const { rows: [lockedGame] } = await clientA.query(
+-        `SELECT "platform" FROM "games" WHERE "id" = $1 FOR UPDATE`,
+-        [gameId],
+-      );
+-      assert.strictEqual(lockedGame.platform, "PS4_ONLY");
+-
+-      // Client B attempts to lock the same row; it will block until A commits.
+-      const bLockPromise = clientB.query(
+-        `SELECT "platform" FROM "games" WHERE "id" = $1 FOR UPDATE`,
+-        [gameId],
+-      );
+-
+-      // Client A creates an Account and Capacities using the locked platform.
+-      const { rows: [account] } = await clientA.query(
+-        `INSERT INTO "accounts" (
+-          "game_id", "account_code", "account_number_prefix", "account_number_seq",
+-          "display_number", "email", "email_normalized",
+-          "playstation_password_encrypted", "email_password_encrypted"
+-        ) VALUES ($1, 'ACC-000001', 'LOCK', 1, '#LOCK-001', 'lock@example.com', 'lock@example.com', 'x', 'x')
+-        RETURNING "id"`,
+-        [gameId],
+-      );
+-
+-      // Capacities for PS4_ONLY.
+-      await clientA.query(
+-        `INSERT INTO "account_capacities" ("account_id", "capacity_kind", "instance_no", "display_label")
+-         VALUES ($1, 'Z2_PS4', 0, 'Z2 PS4')`,
+-        [account.id],
+-      );
+-
+-      // Commit A. This releases the Game lock and allows B to proceed.
+-      await clientA.query("COMMIT");
+-
+-      // B now holds the lock and can inspect the committed state.
+-      await bLockPromise;
+-      const { rows: [history] } = await clientB.query(
+-        `SELECT count(*)::int AS "count" FROM "accounts" WHERE "game_id" = $1`,
+-        [gameId],
+-      );
+-      assert.strictEqual(history.count, 1);
+-
+-      // B would now detect account history and block the platform change.
+-      // Roll back to leave the database in the post-account-creation state.
+-      await clientB.query("ROLLBACK");
+-
+-      // Verify the Account has the original PS4_ONLY capacity.
+-      const { rows: caps } = await pool.query(
+-        `SELECT "capacity_kind", "instance_no" FROM "account_capacities" WHERE "account_id" = $1`,
+-        [account.id],
+-      );
+-      assert.deepStrictEqual(caps, [{ capacity_kind: "Z2_PS4", instance_no: 0 }]);
+-
+-      // Verify the Game platform is unchanged.
+-      const { rows: [finalGame] } = await pool.query(
+-        `SELECT "platform" FROM "games" WHERE "id" = $1`,
+-        [gameId],
+-      );
+-      assert.strictEqual(finalGame.platform, "PS4_ONLY");
+-    } finally {
+-      clientA.release();
+-      clientB.release();
+-    }
+-  });
+-
+-  it("allows both operations to succeed when the platform change wins first", async () => {
+-    const clientA = await pool.connect();
+-    const clientB = await pool.connect();
+-
+-    try {
+-      // Seed a PS4_ONLY game.
+-      const { rows: [game] } = await clientA.query(
+-        `INSERT INTO "games" ("title", "title_normalized", "platform", "status")
+-         VALUES ('Lock Test 2', 'lock test 2', 'PS4_ONLY', 'ACTIVE')
+-         RETURNING "id"`,
+-      );
+-      const gameId = game.id;
+-
+-      // Client A updates the platform to PS5_ONLY under a lock.
+-      await clientA.query("BEGIN");
+-      await clientA.query(
+-        `SELECT "platform" FROM "games" WHERE "id" = $1 FOR UPDATE`,
+-        [gameId],
+-      );
+-      await clientA.query(
+-        `UPDATE "games" SET "platform" = 'PS5_ONLY', "updated_at" = now() WHERE "id" = $1`,
+-        [gameId],
+-      );
+-
+-      // Client B attempts to create an Account; it will block until A commits.
+-      const bAccountPromise = (async () => {
+-        await clientB.query("BEGIN");
+-        const { rows: [lockedGame] } = await clientB.query(
+-          `SELECT "platform" FROM "games" WHERE "id" = $1 FOR UPDATE`,
+-          [gameId],
+-        );
+-        const { rows: [account] } = await clientB.query(
+-          `INSERT INTO "accounts" (
+-            "game_id", "account_code", "account_number_prefix", "account_number_seq",
+-            "display_number", "email", "email_normalized",
+-            "playstation_password_encrypted", "email_password_encrypted"
+-          ) VALUES ($1, 'ACC-000002', 'LOCK', 1, '#LOCK-001', 'lock2@example.com', 'lock2@example.com', 'x', 'x')
+-          RETURNING "id"`,
+-          [gameId],
+-        );
+-        await clientB.query(
+-          `INSERT INTO "account_capacities" ("account_id", "capacity_kind", "instance_no", "display_label")
+-           VALUES ($1, 'Z2_PS5', 1, 'Z2 PS5 #1'), ($1, 'Z2_PS5', 2, 'Z2 PS5 #2'), ($1, 'Z3_PS5', 0, 'Z3 PS5')`,
+-          [account.id],
+-        );
+-        await clientB.query("COMMIT");
+-        return account.id;
+-      })();
+-
+-      await clientA.query("COMMIT");
+-      const accountId = await bAccountPromise;
+-
+-      // Verify the Account has the new PS5_ONLY capacities.
+-      const { rows: caps } = await pool.query(
+-        `SELECT "capacity_kind", "instance_no" FROM "account_capacities" WHERE "account_id" = $1 ORDER BY "capacity_kind", "instance_no"`,
+-        [accountId],
+-      );
+-      assert.deepStrictEqual(caps, [
+-        { capacity_kind: "Z2_PS5", instance_no: 1 },
+-        { capacity_kind: "Z2_PS5", instance_no: 2 },
+-        { capacity_kind: "Z3_PS5", instance_no: 0 },
+-      ]);
+-
+-      // Verify the Game platform is now PS5_ONLY.
+-      const { rows: [finalGame] } = await pool.query(
+-        `SELECT "platform" FROM "games" WHERE "id" = $1`,
+-        [gameId],
+-      );
+-      assert.strictEqual(finalGame.platform, "PS5_ONLY");
+-    } finally {
+-      clientA.release();
+-      clientB.release();
+-    }
+-  });
+-});
+diff --git a/artifacts/api-server/src/routes/accounts.ts b/artifacts/api-server/src/routes/accounts.ts
+index 790cfb6..d3befd5 100644
+--- a/artifacts/api-server/src/routes/accounts.ts
++++ b/artifacts/api-server/src/routes/accounts.ts
+@@ -1,24 +1,10 @@
+ import { Router, type IRouter, type Request, type Response } from "express";
+-import {
+-  db,
+-  gamesTable,
+-  accountsTable,
+-  accountCapacitiesTable,
+-  accountBackupCodesTable,
+-} from "@workspace/db";
+-import {
+-  normalizeAccountNumberPrefix,
+-  buildDisplayNumber,
+-  buildCapacityDefinitions,
+-  type CapacityDefinition,
+-} from "@workspace/db/helpers";
+-import { eq, isNull, and, max as drizzleMax, desc } from "drizzle-orm";
+-import { z } from "zod";
++import { db, gamesTable, accountsTable } from "@workspace/db";
++import { eq, isNull, and, desc } from "drizzle-orm";
+ import { logger } from "../lib/logger";
+ import { p } from "../lib/req-param";
+ import { toSafeAccount } from "../lib/dto";
+ import { requireUuidParam } from "../lib/validate-uuid";
+-import { HttpError } from "../middlewares/error-handler";
+ 
+ const router: IRouter = Router();
+ 
+@@ -26,34 +12,9 @@ const router: IRouter = Router();
+ router.param("gameId", requireUuidParam("gameId"));
+ router.param("id", requireUuidParam("id"));
+ 
+-// ── Validation ──────────────────────────────────────────────────────────────
++const ACCOUNT_OPS_DISABLED = "Account operations are not authorized";
+ 
+-const CreateAccountBody = z.object({
+-  accountNumberPrefix: z.string().optional(),
+-  email: z.string().email(),
+-  /** Stored as-is until encryption middleware is wired up. */
+-  playstationPassword: z.string().min(1),
+-  emailPassword: z.string().min(1),
+-  familyManagementEmail: z.string().email().optional(),
+-  onlineId: z.string().optional(),
+-  birthDate: z.string().optional(),
+-  backupCodes: z.array(z.string()).default([]),
+-});
+-
+-const UpdateAccountBody = z.object({
+-  accountNumberPrefix: z.string().optional(),
+-  email: z.string().email().optional(),
+-  playstationPassword: z.string().min(1).optional(),
+-  emailPassword: z.string().min(1).optional(),
+-  familyManagementEmail: z.string().email().nullable().optional(),
+-  onlineId: z.string().nullable().optional(),
+-  birthDate: z.string().nullable().optional(),
+-  status: z.enum(["active", "disabled"]).optional(),
+-});
+-
+-// ── Routes ───────────────────────────────────────────────────────────────────
+-
+-/** GET /games/:gameId/accounts — list active accounts for a game */
++/** GET /games/:gameId/accounts — list non-secret account summaries for a game */
+ router.get("/games/:gameId/accounts", async (req: Request, res: Response) => {
+   try {
+     const rows = await db
+@@ -74,237 +35,24 @@ router.get("/games/:gameId/accounts", async (req: Request, res: Response) => {
+   }
+ });
+ 
+-/** GET /accounts/:id — account detail with capacities and backup codes */
+-router.get("/accounts/:id", async (req: Request, res: Response) => {
+-  try {
+-    const [account] = await db
+-      .select()
+-      .from(accountsTable)
+-      .where(eq(accountsTable.id, p(req.params["id"])))
+-      .limit(1);
+-
+-    if (!account || account.deletedAt) {
+-      res.status(404).json({ error: "Account not found" });
+-      return;
+-    }
+-
+-    const [capacities, backupCodes] = await Promise.all([
+-      db
+-        .select()
+-        .from(accountCapacitiesTable)
+-        .where(eq(accountCapacitiesTable.accountId, account.id)),
+-      db
+-        .select()
+-        .from(accountBackupCodesTable)
+-        .where(eq(accountBackupCodesTable.accountId, account.id)),
+-    ]);
+-
+-    res.json({ account: toSafeAccount(account), capacities, backupCodes });
+-  } catch (err) {
+-    logger.error(err, "GET /accounts/:id failed");
+-    res.status(500).json({ error: "Internal server error" });
+-  }
++/** GET /accounts/:id — disabled; detail routes may expose secrets. */
++router.get("/accounts/:id", async (_req: Request, res: Response) => {
++  res.status(403).json({ error: ACCOUNT_OPS_DISABLED });
+ });
+ 
+-/** POST /games/:gameId/accounts — create account + auto-generate capacity slots */
+-router.post("/games/:gameId/accounts", async (req: Request, res: Response) => {
+-  const parsed = CreateAccountBody.safeParse(req.body);
+-  if (!parsed.success) {
+-    res.status(400).json({ error: "Validation failed", issues: parsed.error.issues });
+-    return;
+-  }
+-
+-  const gameId = p(req.params["gameId"]);
+-
+-  try {
+-    // Open the transaction before reading the Game, then lock the Game row and
+-    // create the Account + Capacities using the platform from that locked row.
+-    // This serializes with the platform-change guard in PATCH /games/:id so the
+-    // Account is never created with Capacity definitions from a stale platform.
+-    const { account, capacities } = await db.transaction(async (tx) => {
+-      const [game] = await tx
+-        .select()
+-        .from(gamesTable)
+-        .where(eq(gamesTable.id, gameId))
+-        .for("update")
+-        .limit(1);
+-
+-      if (!game || game.deletedAt) {
+-        throw new HttpError(404, "Game not found");
+-      }
+-
+-      // Generate the next account code and per-game sequence inside the same
+-      // transaction so the whole operation is serialized under the Game lock.
+-      const [accountCodeRow] = await tx
+-        .select({ max: drizzleMax(accountsTable.accountCode) })
+-        .from(accountsTable);
+-      const n = accountCodeRow?.max
+-        ? parseInt(accountCodeRow.max.replace("ACC-", ""), 10) + 1
+-        : 1;
+-      const accountCode = `ACC-${String(n).padStart(6, "0")}`;
+-
+-      const [seqRow] = await tx
+-        .select({ max: drizzleMax(accountsTable.accountNumberSeq) })
+-        .from(accountsTable)
+-        .where(eq(accountsTable.gameId, gameId));
+-      const seq = (seqRow?.max ?? 0) + 1;
+-
+-      const prefix = normalizeAccountNumberPrefix(
+-        parsed.data.accountNumberPrefix ?? "",
+-        game.title,
+-      );
+-      const displayNumber = buildDisplayNumber(prefix, seq);
+-
+-      const [account] = await tx
+-        .insert(accountsTable)
+-        .values({
+-          gameId,
+-          accountCode,
+-          accountNumberPrefix: prefix,
+-          accountNumberSeq: seq,
+-          displayNumber,
+-          email: parsed.data.email,
+-          emailNormalized: parsed.data.email.toLowerCase().trim(),
+-          playstationPasswordEncrypted: parsed.data.playstationPassword,
+-          emailPasswordEncrypted: parsed.data.emailPassword,
+-          familyManagementEmailEncrypted: parsed.data.familyManagementEmail ?? null,
+-          onlineId: parsed.data.onlineId ?? null,
+-          birthDate: parsed.data.birthDate ?? null,
+-        })
+-        .returning();
+-
+-      const defs: CapacityDefinition[] = buildCapacityDefinitions(game.platform);
+-      const capacities = await tx
+-        .insert(accountCapacitiesTable)
+-        .values(
+-          defs.map((d) => ({
+-            accountId: account.id,
+-            capacityKind: d.capacityKind,
+-            instanceNo: d.instanceNo,
+-            displayLabel: d.displayLabel,
+-          })),
+-        )
+-        .returning();
+-
+-      if (parsed.data.backupCodes.length > 0) {
+-        await tx.insert(accountBackupCodesTable).values(
+-          parsed.data.backupCodes.map((code: string) => ({
+-            accountId: account.id,
+-            codeEncrypted: code,
+-          })),
+-        );
+-      }
+-
+-      return { account, capacities };
+-    });
+-
+-    res.status(201).json({ account: toSafeAccount(account), capacities });
+-  } catch (err: unknown) {
+-    if (err instanceof HttpError) {
+-      res.status(err.statusCode).json({ error: err.message });
+-      return;
+-    }
+-    if (
+-      typeof err === "object" && err !== null && "code" in err &&
+-      (err as { code: string }).code === "23505"
+-    ) {
+-      res.status(409).json({
+-        error: "An active account with this email already exists for this game",
+-      });
+-      return;
+-    }
+-    logger.error(err, "POST /games/:gameId/accounts failed");
+-    res.status(500).json({ error: "Internal server error" });
+-  }
++/** POST /games/:gameId/accounts — disabled; account creation is not authorized. */
++router.post("/games/:gameId/accounts", async (_req: Request, res: Response) => {
++  res.status(403).json({ error: ACCOUNT_OPS_DISABLED });
+ });
+ 
+-/** PATCH /accounts/:id — update account fields */
+-router.patch("/accounts/:id", async (req: Request, res: Response) => {
+-  const parsed = UpdateAccountBody.safeParse(req.body);
+-  if (!parsed.success) {
+-    res.status(400).json({ error: "Validation failed", issues: parsed.error.issues });
+-    return;
+-  }
+-
+-  const id = p(req.params["id"]);
+-  const data = parsed.data;
+-
+-  try {
+-    const [existing] = await db
+-      .select()
+-      .from(accountsTable)
+-      .where(and(eq(accountsTable.id, id), isNull(accountsTable.deletedAt)))
+-      .limit(1);
+-
+-    if (!existing) {
+-      res.status(404).json({ error: "Account not found" });
+-      return;
+-    }
+-
+-    const update: Partial<typeof accountsTable.$inferInsert> = {
+-      updatedAt: new Date(),
+-    };
+-    if (data.status !== undefined)
+-      update.status = data.status;
+-    if (data.onlineId !== undefined)
+-      update.onlineId = data.onlineId;
+-    if (data.birthDate !== undefined)
+-      update.birthDate = data.birthDate;
+-    if (data.familyManagementEmail !== undefined)
+-      update.familyManagementEmailEncrypted = data.familyManagementEmail;
+-    if (data.email !== undefined) {
+-      update.email = data.email;
+-      update.emailNormalized = data.email.toLowerCase().trim();
+-    }
+-    if (data.playstationPassword !== undefined)
+-      update.playstationPasswordEncrypted = data.playstationPassword;
+-    if (data.emailPassword !== undefined)
+-      update.emailPasswordEncrypted = data.emailPassword;
+-    if (data.accountNumberPrefix !== undefined) {
+-      const newPrefix = normalizeAccountNumberPrefix(
+-        data.accountNumberPrefix,
+-        existing.accountNumberPrefix,
+-      );
+-      update.accountNumberPrefix = newPrefix;
+-      update.displayNumber = buildDisplayNumber(newPrefix, existing.accountNumberSeq);
+-    }
+-
+-    const [account] = await db
+-      .update(accountsTable)
+-      .set(update)
+-      .where(eq(accountsTable.id, id))
+-      .returning();
+-
+-    res.json({ account: toSafeAccount(account) });
+-  } catch (err) {
+-    logger.error(err, "PATCH /accounts/:id failed");
+-    res.status(500).json({ error: "Internal server error" });
+-  }
++/** PATCH /accounts/:id — disabled; account editing is not authorized. */
++router.patch("/accounts/:id", async (_req: Request, res: Response) => {
++  res.status(403).json({ error: ACCOUNT_OPS_DISABLED });
+ });
+ 
+-/** DELETE /accounts/:id — soft delete */
+-router.delete("/accounts/:id", async (req: Request, res: Response) => {
+-  try {
+-    const [account] = await db
+-      .update(accountsTable)
+-      .set({ deletedAt: new Date(), updatedAt: new Date() })
+-      .where(
+-        and(
+-          eq(accountsTable.id, p(req.params["id"])),
+-          isNull(accountsTable.deletedAt),
+-        ),
+-      )
+-      .returning();
+-
+-    if (!account) {
+-      res.status(404).json({ error: "Account not found" });
+-      return;
+-    }
+-    res.json({ ok: true });
+-  } catch (err) {
+-    logger.error(err, "DELETE /accounts/:id failed");
+-    res.status(500).json({ error: "Internal server error" });
+-  }
++/** DELETE /accounts/:id — disabled; account deletion is not authorized. */
++router.delete("/accounts/:id", async (_req: Request, res: Response) => {
++  res.status(403).json({ error: ACCOUNT_OPS_DISABLED });
+ });
+ 
+ export default router;
+diff --git a/artifacts/api-server/src/routes/games.test.ts b/artifacts/api-server/src/routes/games.test.ts
+index c173fea..0ba280a 100644
+--- a/artifacts/api-server/src/routes/games.test.ts
++++ b/artifacts/api-server/src/routes/games.test.ts
+@@ -22,26 +22,44 @@ type ErrorResponse = { error: string };
+ 
+ type GameOrError = GameResponse | ErrorResponse;
+ 
+-async function createAccountForGame(
+-  baseUrl: string,
++let seedCounter = 0;
++
++function nextSeed(): string {
++  seedCounter += 1;
++  return `${Date.now()}_${seedCounter}_${Math.random().toString(36).slice(2, 7)}`;
++}
++
++/**
++ * Seed a minimal Account row directly in the test database so Game guard tests
++ * can exercise the "accounts exist for this game" branch. Dummy values are
++ * supplied for the legacy credential columns that migration 0003 will remove.
++ * This is the only remaining test coupling to those legacy columns and is
++ * listed as a PS-03C2B retirement blocker.
++ */
++function seedAccountForGame(
++  databaseUrl: string,
+   gameId: string,
+-  email: string,
+-) {
+-  const res = await fetch(`${baseUrl}/games/${gameId}/accounts`, {
+-    method: "POST",
+-    headers: { "Content-Type": "application/json" },
+-    body: JSON.stringify({
+-      email,
+-      playstationPassword: "secret",
+-      emailPassword: "secret",
+-    }),
++): { id: string } {
++  const seed = nextSeed();
++  const sql = `
++    INSERT INTO "accounts" (
++      "game_id", "account_code", "account_number_prefix", "account_number_seq",
++      "display_number", "email", "email_normalized",
++      "playstation_password_encrypted", "email_password_encrypted"
++    ) VALUES (
++      '${gameId}', 'ACC-${seed}', 'SEED', ${seedCounter},
++      'SEED-${seed}', 'seed-${seed}@example.com', 'seed-${seed}@example.com',
++      'x', 'x'
++    ) RETURNING "id";
++  `;
++  const output = execSync(`psql "${databaseUrl}" -c "${sql}"`, {
++    encoding: "utf-8",
+   });
+-  if (!res.ok) {
+-    throw new Error(
+-      `Failed to create account for test setup: ${res.status} ${await res.text()}`,
+-    );
+-  }
+-  return (await res.json()) as { account: { id: string } };
++  const match = output.match(
++    /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
++  );
++  if (!match) throw new Error("Failed to seed account");
++  return { id: match[1] };
+ }
+ 
+ function runSql(databaseUrl: string, sql: string) {
+@@ -49,7 +67,11 @@ function runSql(databaseUrl: string, sql: string) {
+ }
+ 
+ function assertGame(data: GameOrError): GameResponse["game"] {
+-  assert.ok("game" in data, "expected game response, got error: " + ("error" in data ? data.error : ""));
++  assert.ok(
++    "game" in data,
++    "expected game response, got error: " +
++      ("error" in data ? data.error : ""),
++  );
+   return data.game;
+ }
+ 
+@@ -187,7 +209,7 @@ describe("Games API", () => {
+     const { data: createData } = await createGame("Platform Lock", "PS4_ONLY");
+     const game = assertGame(createData);
+ 
+-    await createAccountForGame(baseUrl, game.id, "platform-lock@example.com");
++    seedAccountForGame(databaseUrl, game.id);
+ 
+     const { res, data } = await updateGame(game.id, { platform: "PS5_ONLY" });
+     assert.strictEqual(res.status, 409);
+@@ -202,7 +224,7 @@ describe("Games API", () => {
+     const { data: createData } = await createGame("Same Platform", "PS4_ONLY");
+     const game = assertGame(createData);
+ 
+-    await createAccountForGame(baseUrl, game.id, "same-platform@example.com");
++    seedAccountForGame(databaseUrl, game.id);
+ 
+     const { res, data } = await updateGame(game.id, {
+       platform: "PS4_ONLY",
+@@ -218,11 +240,7 @@ describe("Games API", () => {
+     const { data: createData } = await createGame("Soft Delete Lock", "PS4_ONLY");
+     const game = assertGame(createData);
+ 
+-    const { account } = await createAccountForGame(
+-      baseUrl,
+-      game.id,
+-      "soft-delete-lock@example.com",
+-    );
++    const account = seedAccountForGame(databaseUrl, game.id);
+     runSql(
+       databaseUrl,
+       `UPDATE "accounts" SET "deleted_at" = now() WHERE "id" = '${account.id}';`,
+@@ -261,7 +279,7 @@ describe("Games API", () => {
+     const { data: createData } = await createGame("Delete Lock", "PS5_ONLY");
+     const game = assertGame(createData);
+ 
+-    await createAccountForGame(baseUrl, game.id, "delete-lock@example.com");
++    seedAccountForGame(databaseUrl, game.id);
+ 
+     const { res, data } = await deleteGame(game.id);
+     assert.strictEqual(res.status, 409);
+@@ -273,14 +291,13 @@ describe("Games API", () => {
+   });
+ 
+   it("blocks hard delete with a soft-deleted account", async () => {
+-    const { data: createData } = await createGame("Soft Delete Delete", "PS5_ONLY");
++    const { data: createData } = await createGame(
++      "Soft Delete Delete",
++      "PS5_ONLY",
++    );
+     const game = assertGame(createData);
+ 
+-    const { account } = await createAccountForGame(
+-      baseUrl,
+-      game.id,
+-      "soft-delete-delete@example.com",
+-    );
++    const account = seedAccountForGame(databaseUrl, game.id);
+     runSql(
+       databaseUrl,
+       `UPDATE "accounts" SET "deleted_at" = now() WHERE "id" = '${account.id}';`,
+@@ -322,53 +339,4 @@ describe("Games API", () => {
+     assert.ok(titles.includes("List Inactive"));
+     assert.ok(titles.includes("List Active"));
+   });
+-
+-  it("never creates an account with capacities from a stale platform under concurrency", async () => {
+-    // The lock winner is nondeterministic, so repeat a few times to exercise
+-    // both orderings. The invariant is: after both operations complete, the
+-    // account capacities must match the final committed game platform.
+-    for (let i = 0; i < 5; i++) {
+-      const { data: createData } = await createGame(
+-        `Concurrency Race ${i}`,
+-        "PS4_ONLY",
+-      );
+-      const game = assertGame(createData);
+-
+-      const accountPromise = createAccountForGame(
+-        baseUrl,
+-        game.id,
+-        `concurrency-${i}@example.com`,
+-      );
+-      const updatePromise = updateGame(game.id, { platform: "PS5_ONLY" });
+-
+-      const [accountResult, updateResult] = await Promise.all([
+-        accountPromise,
+-        updatePromise,
+-      ]);
+-
+-      const getRes = await fetch(`${baseUrl}/games/${game.id}`);
+-      const finalGame = (await getRes.json()) as GameResponse;
+-
+-      const capsRes = await fetch(`${baseUrl}/accounts/${accountResult.account.id}`);
+-      const capsData = (await capsRes.json()) as {
+-        capacities: { capacityKind: string }[];
+-      };
+-      const kinds = new Set(capsData.capacities.map((c) => c.capacityKind));
+-
+-      if (updateResult.res.status === 200) {
+-        // Game update won the lock. Account creation must have observed the new
+-        // PS5_ONLY platform and created PS5 capacities.
+-        assert.strictEqual(finalGame.game.platform, "PS5_ONLY");
+-        assert.ok(kinds.has("Z2_PS5"), "expected PS5 capacities");
+-        assert.ok(!kinds.has("Z2_PS4"), "did not expect PS4 capacities");
+-      } else {
+-        // Account creation won the lock. Game platform change must have been
+-        // blocked by the account history, leaving PS4 capacities in place.
+-        assert.strictEqual(updateResult.res.status, 409);
+-        assert.strictEqual(finalGame.game.platform, "PS4_ONLY");
+-        assert.ok(kinds.has("Z2_PS4"), "expected PS4 capacities");
+-        assert.ok(!kinds.has("Z2_PS5"), "did not expect PS5 capacities");
+-      }
+-    }
+-  });
+ });
+diff --git a/lib/db/src/helpers/capacity-definitions.ts b/lib/db/src/helpers/capacity-definitions.ts
+index 93f676f..5e2a267 100644
+--- a/lib/db/src/helpers/capacity-definitions.ts
++++ b/lib/db/src/helpers/capacity-definitions.ts
+@@ -5,31 +5,31 @@
+  * Commander decision 2 (final, must not be changed):
+  *
+  *   PS5_ONLY:
+- *     Z2 PS5 #1   (capacityKind=Z2_PS5, instanceNo=1)
+- *     Z2 PS5 #2   (capacityKind=Z2_PS5, instanceNo=2)
+- *     Z3 PS5      (capacityKind=Z3_PS5, instanceNo=0)
++ *     Z2 PS5 #1          (capacityKind=Z2_PS5, instanceNo=1)
++ *     Z2 PS5 #2          (capacityKind=Z2_PS5, instanceNo=2)
++ *     Z3 Shared PS5/PS4  (capacityKind=Z3_SHARED_PS5_PS4, instanceNo=0)
+  *
+  *   PS4_AND_PS5:
+- *     Z2 PS5 #1   (capacityKind=Z2_PS5, instanceNo=1)
+- *     Z2 PS5 #2   (capacityKind=Z2_PS5, instanceNo=2)
+- *     Z2 PS4      (capacityKind=Z2_PS4, instanceNo=0)
+- *     Z3 PS5      (capacityKind=Z3_PS5, instanceNo=0)
++ *     Z2 PS5 #1          (capacityKind=Z2_PS5, instanceNo=1)
++ *     Z2 PS5 #2          (capacityKind=Z2_PS5, instanceNo=2)
++ *     Z2 PS4              (capacityKind=Z2_PS4, instanceNo=0)
++ *     Z3 Shared PS5/PS4  (capacityKind=Z3_SHARED_PS5_PS4, instanceNo=0)
+  *
+  *   PS4_ONLY:
+- *     Z2 PS4      (capacityKind=Z2_PS4, instanceNo=0)
++ *     Z2 PS4              (capacityKind=Z2_PS4, instanceNo=0)
+  *
+  * instanceNo is always NOT NULL (Commander decision 3):
+  *   - Z2_PS5 slots use 1-based instanceNo to distinguish #1 / #2.
+- *   - Z2_PS4 and Z3_PS5 are singletons → instanceNo=0 (avoids nullable unique).
++ *   - Z2_PS4 and Z3_SHARED_PS5_PS4 are singletons → instanceNo=0 (avoids nullable unique).
+  *
+- * Never store labels like "Z2 PS4 #1", "Z2 PS4 #0", or "Z3 PS5 #0".
++ * Never store labels like "Z2 PS4 #1", "Z2 PS4 #0", or "Z3 Shared PS5/PS4 #0".
+  *
+  * Commander decision 10: changing game platform must NOT regenerate existing
+  * capacities. This function is only called when an account is first created.
+  */
+ 
+ export type GamePlatform = "PS5_ONLY" | "PS4_AND_PS5" | "PS4_ONLY";
+-export type CapacityKind = "Z2_PS5" | "Z2_PS4" | "Z3_PS5";
++export type CapacityKind = "Z2_PS5" | "Z2_PS4" | "Z3_SHARED_PS5_PS4";
+ 
+ export interface CapacityDefinition {
+   capacityKind: CapacityKind;
+@@ -45,7 +45,11 @@ export function buildCapacityDefinitions(
+       return [
+         { capacityKind: "Z2_PS5", instanceNo: 1, displayLabel: "Z2 PS5 #1" },
+         { capacityKind: "Z2_PS5", instanceNo: 2, displayLabel: "Z2 PS5 #2" },
+-        { capacityKind: "Z3_PS5", instanceNo: 0, displayLabel: "Z3 PS5" },
++        {
++          capacityKind: "Z3_SHARED_PS5_PS4",
++          instanceNo: 0,
++          displayLabel: "Z3 Shared PS5/PS4",
++        },
+       ];
+ 
+     case "PS4_AND_PS5":
+@@ -53,7 +57,11 @@ export function buildCapacityDefinitions(
+         { capacityKind: "Z2_PS5", instanceNo: 1, displayLabel: "Z2 PS5 #1" },
+         { capacityKind: "Z2_PS5", instanceNo: 2, displayLabel: "Z2 PS5 #2" },
+         { capacityKind: "Z2_PS4", instanceNo: 0, displayLabel: "Z2 PS4" },
+-        { capacityKind: "Z3_PS5", instanceNo: 0, displayLabel: "Z3 PS5" },
++        {
++          capacityKind: "Z3_SHARED_PS5_PS4",
++          instanceNo: 0,
++          displayLabel: "Z3 Shared PS5/PS4",
++        },
+       ];
+ 
+     case "PS4_ONLY":

@@ -1,29 +1,54 @@
-import type { accountsTable } from "@workspace/db";
+import type { Account } from "@workspace/db";
 
 /**
- * Strip sensitive encrypted columns before returning an account to any caller.
+ * Non-secret subset of an Account returned by generic API responses.
  *
- * NOTE: actual encryption is not yet wired — these columns currently hold
- * plaintext during development. They must NEVER be returned in API responses
- * until a proper authz layer is in place.
- *
- * The three omitted fields can be surfaced on a dedicated, auth-gated
- * "reveal credentials" endpoint in a future phase.
+ * Excludes all legacy credential columns, all encrypted/lookup-hash columns,
+ * all email and family-management secrets, all password fields, all Backup
+ * Codes, and the legacy active/disabled status columns.
  */
-export function toSafeAccount(
-  a: typeof accountsTable.$inferSelect,
-): Omit<
-  typeof accountsTable.$inferSelect,
-  | "playstationPasswordEncrypted"
-  | "emailPasswordEncrypted"
-  | "familyManagementEmailEncrypted"
-> {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const {
-    playstationPasswordEncrypted,
-    emailPasswordEncrypted,
-    familyManagementEmailEncrypted,
-    ...safe
-  } = a;
-  return safe;
+export interface SafeAccount {
+  id: string;
+  gameId: string;
+  accountCode: string;
+  accountNumberPrefix: string;
+  accountNumberSeq: number;
+  displayNumber: string;
+  onlineId: string | null;
+  birthDate: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Authoritative storage-only Backup Code contract.
+ *
+ * PlaySyncer will not validate, consume, search, lifecycle-track, hash, or
+ * reveal Backup Codes in this stage. The DB column currently storing the value
+ * is `code_encrypted`; migration 0003 will rename it to `code_ciphertext` in
+ * PS-03C2B.
+ */
+export interface BackupCodeStorage {
+  id: string;
+  accountId: string;
+  codeCiphertext: string;
+  createdAt: Date;
+}
+
+/**
+ * Strip all secret and legacy fields before returning an Account to any caller.
+ */
+export function toSafeAccount(a: Account): SafeAccount {
+  return {
+    id: a.id,
+    gameId: a.gameId,
+    accountCode: a.accountCode,
+    accountNumberPrefix: a.accountNumberPrefix,
+    accountNumberSeq: a.accountNumberSeq,
+    displayNumber: a.displayNumber,
+    onlineId: a.onlineId ?? null,
+    birthDate: a.birthDate ?? null,
+    createdAt: a.createdAt,
+    updatedAt: a.updatedAt,
+  };
 }

@@ -1,0 +1,319 @@
+You are executing only:
+
+PS-03C2A — Runtime Schema Compatibility Refactor
+
+PS-03C1 is APPROVED AND CLOSED.
+PS-03C2 was split because Runtime code still depends on legacy Account schema paths.
+
+Purpose:
+Remove Runtime and test dependencies on legacy Account fields so migration 0003 can later retire them safely.
+
+Do not create or apply migration 0003 in this stage.
+
+## Immutable migration baseline
+
+0000:
+a43ab14cacf73a107d5c115c2025dc56de3537efe4d409ca65c79e48a8aa07ca
+
+0001:
+c09f28b3895fa3ee2732f42438d55e4ad136a02d485386bfe001c4530d14c4c2
+
+0002:
+99f124e4bb93a8763d485813a65355c44e4a0aa4a1a6b4eb8ddffc47e3059b6a
+
+Never modify, remove, regenerate or reapply these migrations.
+
+---
+
+# Strict scope
+
+Allowed:
+
+- refactor Account Runtime code away from legacy Account fields
+- refactor Account API tests
+- update internal Account/Backup Code types
+- update relevant project documentation
+- add tests proving disabled Account operations remain fail-closed
+- report remaining schema-retirement candidates for PS-03C2B
+
+Forbidden:
+
+- migration 0003
+- migration metadata changes
+- Drizzle schema changes
+- live database writes or schema changes
+- Account CRUD implementation
+- enabling Account POST, PATCH or DELETE
+- OpenAPI work
+- generated clients
+- frontend integration
+- Secret Reveal
+- Authentication or RBAC
+- Customer Assignment
+- modifying capacity_customers
+- dependency additions
+- broad refactoring
+
+Do not modify:
+
+- lib/db/migrations
+- lib/db/migrations/meta
+- lib/db/src/schema
+- lib/api-spec
+- lib/api-client-react
+- lib/api-zod
+- frontend Account Workspace
+- capacity_customers schema
+
+---
+
+# 1. Preflight
+
+Before editing:
+
+- inspect all Account routes, DTOs, tests and schema references
+- inspect Git status
+- record hashes of migrations 0000, 0001 and 0002
+- identify every Runtime/test reference to legacy Account fields
+- identify every Runtime/test reference to `Z3_PS5`
+
+Perform a read-only live verification confirming:
+
+- migrations 0000, 0001 and 0002 exist once with approved hashes
+- migration 0003 does not exist
+- Account-related tables remain empty
+
+Use:
+
+BEGIN TRANSACTION READ ONLY;
+SHOW transaction_read_only;
+...
+ROLLBACK;
+
+Do not expose credentials or connection strings.
+
+---
+
+# 2. Disable Account writes explicitly
+
+Account POST, PATCH and DELETE must remain unauthorized and fail-closed.
+
+Requirements:
+
+- remove their dependency on legacy insert/update/delete schema fields
+- do not implement canonical writes
+- do not perform database mutations
+- return an explicit disabled/unauthorized response consistent with the API’s existing error conventions
+- add tests proving the handlers cannot write Account data
+- do not silently accept or ignore write requests
+
+Any unsafe Account detail route capable of returning Secrets must remain disabled.
+
+Do not enable Account creation, editing or deletion.
+
+---
+
+# 3. Remove Runtime dependency on legacy Account fields
+
+Refactor Runtime code so it no longer references legacy fields planned for removal in PS-03C2B, including where present:
+
+- plaintext Account email
+- normalized plaintext email
+- legacy password/family-email columns
+- legacy active/disabled Account status
+- legacy `Z3_PS5` Capacity kind
+
+Update DTO mapping so generic Account responses never expose:
+
+- encrypted/ciphertext values
+- password fields
+- email secrets
+- Family Management Email secrets
+- Backup Codes
+
+Generic DTOs must contain only non-secret Account information.
+
+Do not implement decryption or Secret Reveal.
+
+---
+
+# 4. Shared Z3 compatibility
+
+Replace Runtime and test dependency on:
+
+Z3_PS5
+
+with:
+
+Z3_SHARED_PS5_PS4
+
+Update affected API tests and fixtures.
+
+Do not implement Capacity template creation in this stage.
+
+Preserve existing Games behavior and Games tests.
+
+---
+
+# 5. Simplified Backup Code decision
+
+The authoritative Backup Code contract is now storage-only:
+
+- id
+- account_id
+- code_ciphertext
+- created_at
+
+PlaySyncer will not:
+
+- validate Backup Codes
+- consume them
+- search them
+- track lifecycle status
+- store lookup hashes
+- maintain used_at
+
+Update Runtime-facing types and logic accordingly.
+
+Requirements:
+
+- Runtime code must not depend on Backup Code status, lookup hash or used_at
+- generic DTOs must never return Backup Codes
+- no Backup Code Reveal route may be enabled
+- no database schema change is allowed in PS-03C2A
+- unnecessary fields introduced by migration 0002 remain physically present until PS-03C2B removes them with migration 0003
+
+---
+
+# 6. Tests
+
+Update or add tests proving:
+
+- Account POST remains disabled and performs no write
+- Account PATCH remains disabled and performs no write
+- Account DELETE remains disabled and performs no write
+- unsafe Secret-bearing Account detail routes remain disabled
+- generic Account DTOs exclude all Secrets and Backup Codes
+- Runtime/tests no longer reference legacy Account fields
+- Runtime/tests no longer reference `Z3_PS5`
+- simplified Backup Code Runtime types contain only the approved storage-only fields
+- Games behavior and existing Games tests remain unchanged
+- capacity_customers remains unchanged
+
+Do not insert test data into the live database.
+
+---
+
+# 7. Documentation
+
+Update only the relevant phase/decision documentation to record:
+
+- PS-03C2A Runtime compatibility stage
+- Account writes remain unauthorized
+- migration 0003 has not been created
+- the simplified storage-only Backup Code decision supersedes the previous lifecycle model
+- migration 0002 remains immutable
+- unnecessary Backup Code schema fields will be removed later by PS-03C2B
+- Customer Assignment remains outside Account Core
+
+Do not mark PS-03C2B as started.
+
+---
+
+# 8. Required checks
+
+Run the existing repository commands for:
+
+- monorepo TypeScript typecheck
+- API Server tests
+- DB helper tests
+- DB migration tests
+- frontend production build
+
+At minimum run, where available:
+
+- `pnpm run typecheck`
+- `pnpm --filter @workspace/api-server run test`
+- `pnpm --filter @workspace/db run test`
+- `pnpm --filter @workspace/db run test:migrations`
+- `pnpm --filter @workspace/playsyncer run build`
+
+If a command does not exist, report that and run the closest existing repository script.
+
+Do not claim PASS without a successful exit code.
+
+---
+
+# 9. Prove no database or migration change
+
+After implementation, repeat the live read-only verification.
+
+Confirm:
+
+- migrations 0000, 0001 and 0002 hashes remain unchanged
+- migration 0003 does not exist
+- no migration was applied
+- all Account-related tables remain empty
+- game_account_sequences remains empty
+- capacity_customers remains unchanged
+
+Finish with:
+
+ROLLBACK;
+
+Also confirm no files changed under:
+
+- lib/db/migrations
+- lib/db/migrations/meta
+- lib/db/src/schema
+
+---
+
+# 10. PS-03C2B retirement inventory
+
+Produce an exact inventory of schema objects that migration 0003 may later retire.
+
+Report exact database/source names for:
+
+- legacy plaintext Account columns
+- legacy normalized-email column and unique index
+- legacy Account status column, index and enum
+- legacy password/family-email columns
+- legacy Capacity-kind column, enum, index and `Z3_PS5`
+- obsolete Backup Code value field
+- Backup Code lookup-hash, lifecycle status and used_at fields now superseded
+- any remaining Runtime or test coupling that still blocks retirement
+
+Do not remove these objects in PS-03C2A.
+
+---
+
+# Required artifacts
+
+Create:
+
+- `reports/ps03c2a_implementation_report.md`
+- `reports/ps03c2a_complete.diff`
+- `reports/ps03c2b_retirement_inventory.md`
+
+The final report must include:
+
+- exact changed-file list
+- exact Runtime couplings removed
+- test commands and results
+- confirmation Account writes remain disabled
+- confirmation generic DTOs expose no Secrets or Backup Codes
+- confirmation `Z3_PS5` Runtime/test dependency is removed
+- confirmation capacity_customers is unchanged
+- migration hashes before and after
+- live row counts before and after
+- proof that no migration/schema/live database change occurred
+- remaining blockers for PS-03C2B
+
+Final status must be:
+
+PS-03C2A — IMPLEMENTED, AWAITING COMMAND CENTER REVIEW
+
+Do not approve or close the stage automatically.
+
+Stop after returning the evidence report and artifacts.

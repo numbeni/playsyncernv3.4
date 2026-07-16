@@ -48,11 +48,11 @@ lib/
 | GET | /games/:id | Get single game |
 | PATCH | /games/:id | Update game |
 | DELETE | /games/:id | Soft delete game |
-| GET | /games/:gameId/accounts | List accounts for game |
-| POST | /games/:gameId/accounts | Create account + auto-generate capacity slots |
-| GET | /accounts/:id | Account detail with capacities + backup codes |
-| PATCH | /accounts/:id | Update account |
-| DELETE | /accounts/:id | Soft delete account |
+| GET | /games/:gameId/accounts | List safe account summaries for a game (no secrets) |
+| POST | /games/:gameId/accounts | **Disabled** — account creation is not authorized |
+| GET | /accounts/:id | **Disabled** — detail routes may expose secrets |
+| PATCH | /accounts/:id | **Disabled** — account editing is not authorized |
+| DELETE | /accounts/:id | **Disabled** — account deletion is not authorized |
 | GET | /accounts/:accountId/capacities | Capacity slots with active customers |
 | POST | /capacities/:capacityId/customers | Assign customer to slot |
 | PATCH | /capacities/:capacityId/customers/:id | Edit customer assignment |
@@ -66,16 +66,16 @@ lib/
 8 tables: `admins`, `games`, `accounts`, `account_backup_codes`, `account_capacities`, `orders`, `capacity_customers`, `audit_logs`
 
 Key constraints:
-- `accounts.email_normalized`: partial unique WHERE `deleted_at IS NULL`
-- `capacity_customers(capacity_id, order_id)`: partial unique WHERE `status = 'active'`
-- `account_capacities(account_id, capacity_kind, instance_no)`: unique constraint
+- `accounts.email_normalized`: partial unique WHERE `deleted_at IS NULL` (legacy, scheduled for removal in PS-03C2B)
+- `capacity_customers(capacity_id, order_id)`: partial unique WHERE `status = 'active'` (unchanged)
+- `account_capacities(account_id, capacity_kind, instance_no)`: unique constraint (legacy, scheduled for removal in PS-03C2B)
 
 ## Capacity rules (fixed — do not change)
 
 | Platform | Slots |
 |----------|-------|
-| PS5_ONLY | Z2 PS5 #1, Z2 PS5 #2, Z3 PS5 |
-| PS4_AND_PS5 | Z2 PS5 #1, Z2 PS5 #2, Z2 PS4, Z3 PS5 |
+| PS5_ONLY | Z2 PS5 #1, Z2 PS5 #2, Z3 Shared PS5/PS4 |
+| PS4_AND_PS5 | Z2 PS5 #1, Z2 PS5 #2, Z2 PS4, Z3 Shared PS5/PS4 |
 | PS4_ONLY | Z2 PS4 |
 
 `instanceNo`: Z2_PS5 uses 1/2, singletons use 0.
@@ -102,6 +102,12 @@ Key constraints:
 - `lib/db` uses `"type": "module"` — esbuild handles import resolution at api-server build time
 - `req.params` in Express 5 types is `string | string[]` — use the `p()` helper from `src/lib/req-param.ts`
 - `nextAccountCode()` and `nextSeqForGame()` in accounts.ts are race-condition-prone under concurrent load — replace with PostgreSQL sequences before production
+
+## Account Core phase notes
+
+- **PS-03C1** — APPROVED & CLOSED. Migration `0002_warm_swarm.sql` is frozen; it added immutable identifiers, per-game counters, encrypted/lookup-hash columns, and FINISHED capacity state.
+- **PS-03C2A** — IMPLEMENTED, AWAITING COMMAND CENTER REVIEW. Runtime code was refactored so Account POST/PATCH/DELETE/GET-detail are disabled and fail-closed; generic Account DTOs no longer return secrets; `Z3_PS5` Runtime dependency was replaced with `Z3_SHARED_PS5_PS4`; Backup Code Runtime contract was reduced to storage-only (`id`, `account_id`, `code_ciphertext`, `created_at`). No migration, schema metadata, or live database changes occurred.
+- **PS-03C2B** — NOT STARTED. Will create migration `0003` to retire the legacy Account/Backup Code/Capacity fields identified in `reports/ps03c2b_retirement_inventory.md`.
 
 ## User preferences
 

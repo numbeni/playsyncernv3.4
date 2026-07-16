@@ -22,26 +22,44 @@ type ErrorResponse = { error: string };
 
 type GameOrError = GameResponse | ErrorResponse;
 
-async function createAccountForGame(
-  baseUrl: string,
+let seedCounter = 0;
+
+function nextSeed(): string {
+  seedCounter += 1;
+  return `${Date.now()}_${seedCounter}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+/**
+ * Seed a minimal Account row directly in the test database so Game guard tests
+ * can exercise the "accounts exist for this game" branch. Dummy values are
+ * supplied for the legacy credential columns that migration 0003 will remove.
+ * This is the only remaining test coupling to those legacy columns and is
+ * listed as a PS-03C2B retirement blocker.
+ */
+function seedAccountForGame(
+  databaseUrl: string,
   gameId: string,
-  email: string,
-) {
-  const res = await fetch(`${baseUrl}/games/${gameId}/accounts`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      email,
-      playstationPassword: "secret",
-      emailPassword: "secret",
-    }),
+): { id: string } {
+  const seed = nextSeed();
+  const sql = `
+    INSERT INTO "accounts" (
+      "game_id", "account_code", "account_number_prefix", "account_number_seq",
+      "display_number", "email", "email_normalized",
+      "playstation_password_encrypted", "email_password_encrypted"
+    ) VALUES (
+      '${gameId}', 'ACC-${seed}', 'SEED', ${seedCounter},
+      'SEED-${seed}', 'seed-${seed}@example.com', 'seed-${seed}@example.com',
+      'x', 'x'
+    ) RETURNING "id";
+  `;
+  const output = execSync(`psql "${databaseUrl}" -c "${sql}"`, {
+    encoding: "utf-8",
   });
-  if (!res.ok) {
-    throw new Error(
-      `Failed to create account for test setup: ${res.status} ${await res.text()}`,
-    );
-  }
-  return (await res.json()) as { account: { id: string } };
+  const match = output.match(
+    /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+  );
+  if (!match) throw new Error("Failed to seed account");
+  return { id: match[1] };
 }
 
 function runSql(databaseUrl: string, sql: string) {
@@ -49,7 +67,11 @@ function runSql(databaseUrl: string, sql: string) {
 }
 
 function assertGame(data: GameOrError): GameResponse["game"] {
-  assert.ok("game" in data, "expected game response, got error: " + ("error" in data ? data.error : ""));
+  assert.ok(
+    "game" in data,
+    "expected game response, got error: " +
+      ("error" in data ? data.error : ""),
+  );
   return data.game;
 }
 
@@ -187,7 +209,7 @@ describe("Games API", () => {
     const { data: createData } = await createGame("Platform Lock", "PS4_ONLY");
     const game = assertGame(createData);
 
-    await createAccountForGame(baseUrl, game.id, "platform-lock@example.com");
+    seedAccountForGame(databaseUrl, game.id);
 
     const { res, data } = await updateGame(game.id, { platform: "PS5_ONLY" });
     assert.strictEqual(res.status, 409);
@@ -202,7 +224,7 @@ describe("Games API", () => {
     const { data: createData } = await createGame("Same Platform", "PS4_ONLY");
     const game = assertGame(createData);
 
-    await createAccountForGame(baseUrl, game.id, "same-platform@example.com");
+    seedAccountForGame(databaseUrl, game.id);
 
     const { res, data } = await updateGame(game.id, {
       platform: "PS4_ONLY",
@@ -218,11 +240,7 @@ describe("Games API", () => {
     const { data: createData } = await createGame("Soft Delete Lock", "PS4_ONLY");
     const game = assertGame(createData);
 
-    const { account } = await createAccountForGame(
-      baseUrl,
-      game.id,
-      "soft-delete-lock@example.com",
-    );
+    const account = seedAccountForGame(databaseUrl, game.id);
     runSql(
       databaseUrl,
       `UPDATE "accounts" SET "deleted_at" = now() WHERE "id" = '${account.id}';`,
@@ -261,7 +279,7 @@ describe("Games API", () => {
     const { data: createData } = await createGame("Delete Lock", "PS5_ONLY");
     const game = assertGame(createData);
 
-    await createAccountForGame(baseUrl, game.id, "delete-lock@example.com");
+    seedAccountForGame(databaseUrl, game.id);
 
     const { res, data } = await deleteGame(game.id);
     assert.strictEqual(res.status, 409);
@@ -273,14 +291,13 @@ describe("Games API", () => {
   });
 
   it("blocks hard delete with a soft-deleted account", async () => {
-    const { data: createData } = await createGame("Soft Delete Delete", "PS5_ONLY");
+    const { data: createData } = await createGame(
+      "Soft Delete Delete",
+      "PS5_ONLY",
+    );
     const game = assertGame(createData);
 
-    const { account } = await createAccountForGame(
-      baseUrl,
-      game.id,
-      "soft-delete-delete@example.com",
-    );
+    const account = seedAccountForGame(databaseUrl, game.id);
     runSql(
       databaseUrl,
       `UPDATE "accounts" SET "deleted_at" = now() WHERE "id" = '${account.id}';`,
@@ -321,54 +338,5 @@ describe("Games API", () => {
     const titles = data.games.map((g) => g.title);
     assert.ok(titles.includes("List Inactive"));
     assert.ok(titles.includes("List Active"));
-  });
-
-  it("never creates an account with capacities from a stale platform under concurrency", async () => {
-    // The lock winner is nondeterministic, so repeat a few times to exercise
-    // both orderings. The invariant is: after both operations complete, the
-    // account capacities must match the final committed game platform.
-    for (let i = 0; i < 5; i++) {
-      const { data: createData } = await createGame(
-        `Concurrency Race ${i}`,
-        "PS4_ONLY",
-      );
-      const game = assertGame(createData);
-
-      const accountPromise = createAccountForGame(
-        baseUrl,
-        game.id,
-        `concurrency-${i}@example.com`,
-      );
-      const updatePromise = updateGame(game.id, { platform: "PS5_ONLY" });
-
-      const [accountResult, updateResult] = await Promise.all([
-        accountPromise,
-        updatePromise,
-      ]);
-
-      const getRes = await fetch(`${baseUrl}/games/${game.id}`);
-      const finalGame = (await getRes.json()) as GameResponse;
-
-      const capsRes = await fetch(`${baseUrl}/accounts/${accountResult.account.id}`);
-      const capsData = (await capsRes.json()) as {
-        capacities: { capacityKind: string }[];
-      };
-      const kinds = new Set(capsData.capacities.map((c) => c.capacityKind));
-
-      if (updateResult.res.status === 200) {
-        // Game update won the lock. Account creation must have observed the new
-        // PS5_ONLY platform and created PS5 capacities.
-        assert.strictEqual(finalGame.game.platform, "PS5_ONLY");
-        assert.ok(kinds.has("Z2_PS5"), "expected PS5 capacities");
-        assert.ok(!kinds.has("Z2_PS4"), "did not expect PS4 capacities");
-      } else {
-        // Account creation won the lock. Game platform change must have been
-        // blocked by the account history, leaving PS4 capacities in place.
-        assert.strictEqual(updateResult.res.status, 409);
-        assert.strictEqual(finalGame.game.platform, "PS4_ONLY");
-        assert.ok(kinds.has("Z2_PS4"), "expected PS4 capacities");
-        assert.ok(!kinds.has("Z2_PS5"), "did not expect PS5 capacities");
-      }
-    }
   });
 });
