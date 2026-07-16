@@ -1,0 +1,189 @@
+Act as a Senior Frontend Engineer and Release-Safety Reviewer.
+
+We are working on PlaySyncer.
+
+Current issue:
+When a new game is created, its technical gameId may look like:
+game-1783602440103
+
+Then new account per-game numbers are generated like:
+#GAME-1783602440103-001
+
+This is not acceptable for UI/admin usage.
+
+We need account display numbering to use a clean account label prefix based on the game title, or an optional custom account naming field, not the technical gameId.
+
+Important limits:
+Do NOT redesign the app.
+Do NOT add backend.
+Do NOT add database.
+Do NOT add auth.
+Do NOT add WooCommerce.
+Do NOT add orders or push delivery.
+Do NOT change the global accountCode logic like ACC-000001.
+Do NOT break existing per-game numbering.
+Keep changes frontend/mock-state only.
+
+Inspect first:
+- src/hooks/useGames.tsx
+- src/components/AccountFormModal.tsx
+- src/domain/accounts/types.ts
+- src/domain/games/types.ts
+- src/components/AccountCard.tsx
+- src/components/AccountDetailsModal.tsx
+- src/components/SmartSearch.tsx
+- src/mocks/playSyncerMockData.ts
+
+Required changes:
+
+1. Do not use technical gameId for user-facing account number prefix
+
+The per-game account number should not be generated from gameId if gameId is a technical value like:
+game-1783602440103
+
+Instead, generate the user-facing per-game account number from a clean display prefix.
+
+2. Add optional account naming/prefix field in Add/Edit Account form
+
+Add an optional field in account creation/edit form:
+
+Label:
+Account Display Name / Account Prefix
+Persian helper text:
+اگر خالی بماند، نام بازی برای شماره نمایشی اکانت استفاده می‌شود.
+
+Behavior:
+- If admin enters a value, use it as the base prefix for account.number.
+- If empty, use the parent game title as the base prefix.
+
+Example:
+Game title: clair obscur
+Optional account prefix empty:
+#CLAIR-OBSCUR-001
+
+Optional account prefix: GTA6
+#GTA6-001
+
+Optional account prefix: FC25
+#FC25-001
+
+3. Add accountNumberPrefix or accountDisplayName to Account type
+
+Add a new field if needed:
+- accountNumberPrefix
+or
+- accountDisplayName
+
+This field should store the clean prefix/source used for the per-game number.
+
+Do not confuse this with:
+- account.id
+- account.accountCode
+- account.number
+
+Definitions:
+- account.id = internal technical ID
+- account.accountCode = global unique identifier like ACC-000001
+- account.number = per-game display number like #GTA6-001
+- accountNumberPrefix/accountDisplayName = optional clean base name used to generate account.number
+
+4. Generate clean account number safely
+
+Create or update a helper to normalize prefix:
+
+Rules:
+- Trim whitespace.
+- Convert spaces to hyphen.
+- Remove unsafe characters.
+- Keep English letters and numbers.
+- Uppercase output.
+- Avoid Persian characters in account.number prefix if possible.
+- If normalized prefix becomes empty, fallback to "ACC".
+
+Examples:
+"clair obscur" -> CLAIR-OBSCUR
+"GTA VI" -> GTA-VI
+"FC 25" -> FC-25
+
+Generated number:
+#CLAIR-OBSCUR-001
+
+5. Preserve per-game sequence
+
+The sequence number must still be per game.
+
+Example:
+For game clair obscur:
+#CLAIR-OBSCUR-001
+#CLAIR-OBSCUR-002
+
+For game GTA VI:
+#GTA-VI-001
+#GTA-VI-002
+
+Do not make this sequence global.
+Global sequence is already handled by accountCode.
+
+6. Editing account prefix
+
+If the admin edits the optional account prefix:
+- update the visible per-game account number prefix
+- preserve the numeric sequence part if possible
+- do not change global accountCode
+- do not change internal account.id
+
+Example:
+Before:
+#CLAIR-OBSCUR-001
+
+After prefix changed to CO33:
+#CO33-001
+
+7. Update AccountCard and details if needed
+
+AccountCard should show the cleaned account.number.
+AccountDetailsModal should also show the cleaned per-game number if it already displays it.
+
+Both account.number and accountCode must remain copyable/searchable.
+
+8. Update SmartSearch compatibility
+
+SmartSearch must continue searching:
+- account.number
+- account.accountCode
+- account display prefix if stored
+- game title
+- existing account fields
+
+Searching CLAIR, OBSCUR, CLAIR-OBSCUR, GTA6, #GTA6-001 should work if current search architecture supports it.
+
+Do not rebuild SmartSearch completely unless required.
+
+9. Update mock data if needed
+
+Existing mock accounts should continue working.
+If mock account numbers use old format, update them to the new clean format where appropriate.
+
+10. Quality checks
+
+Run:
+- pnpm run typecheck
+- pnpm run build
+
+If lint exists:
+- pnpm run lint
+
+Fix TypeScript/build errors.
+
+Final response must include:
+- changed files
+- exact changes made
+- confirmation that technical gameId is no longer used for user-facing account.number prefix
+- confirmation that optional account prefix/display name was added to account form
+- confirmation that empty prefix falls back to game title
+- confirmation that global accountCode was not changed
+- confirmation that per-game numbering sequence is preserved
+- confirmation that account.number remains searchable and copyable
+- confirmation that no backend/database/auth/WooCommerce/orders/push delivery/localStorage was added
+- test results
+- remaining risks or follow-up notes

@@ -1,0 +1,172 @@
+PS-02B — Stage C2A: Mutation Hardening
+
+Stage C1 is accepted with deferred corrections.
+
+Proceed only with Stage C2A.
+
+Do not implement Delete Game.
+Do not start Stage C2B or Stage D.
+
+Input candidate:
+
+playsyncernv3.3-main (5).zip
+
+Expected SHA-256:
+
+f6781255375d694744048b509d7f0b52f1eeb1c9ddc7e6eb0142072cb159b625
+
+## Objective
+
+Correct the shared Create, Edit and Status mutation behavior before Delete integration.
+
+## Restrictions
+
+Do not run:
+
+- migrations
+- drizzle-kit push
+- direct SQL
+- schema changes
+- rollback scripts
+
+Do not modify or delete:
+
+- FIFA 16
+- Rocket League
+
+Do not modify:
+
+- backend routes
+- OpenAPI
+- generated API clients
+- Account or Capacity integration
+- `.agents/memory`
+
+No new dependency is allowed.
+
+## 1. Await Games query synchronization
+
+For Create, Edit and Status:
+
+1. Await the API mutation.
+2. Await Games list invalidation/refetch.
+3. Close the modal or dialog only after synchronization finishes.
+
+Do not call `invalidateQueries` without returning or awaiting its Promise.
+
+Do not update Games through local optimistic state.
+
+## 2. Show Status errors
+
+ConfirmDialog must not silently swallow mutation errors.
+
+Required behavior:
+
+- Failed Status change keeps the dialog open.
+- A safe Persian error is shown inside the dialog.
+- Raw server response and stack traces are not displayed.
+- Error clears when the dialog is reopened.
+- User can retry after failure.
+
+Apply this to Status actions in:
+
+- GamesPage
+- GameDetailPage
+
+## 3. Prevent duplicate requests
+
+Do not rely on `mutationKey` for duplicate-submit protection.
+
+Add a synchronous ref-based lock or equivalent immediate guard to:
+
+- Create submit
+- Edit submit
+- Status confirm
+
+While pending:
+
+- Submit or Confirm is disabled.
+- Rapid repeated clicks cannot send another request.
+- Escape cannot close the modal.
+- Backdrop click cannot close it.
+- Close and Cancel are disabled.
+- The lock remains active during successful close animation.
+- On failure, unlock so the user can retry.
+
+Do not broadly refactor the modal system.
+
+## 4. Documentation
+
+Set `docs/CURRENT_PHASE.md` status to:
+
+`STAGE_C2A_IN_PROGRESS`
+
+After validation, set it to:
+
+`STAGE_C2A_READY_FOR_REVIEW`
+
+Correct conflicting SHA entries.
+
+Clearly record:
+
+- Stage C1 input baseline SHA:
+  `fa294680fa18e84c7522acfbe10e6d257c4df40b1cdeda09e857830acd618a2d`
+
+- Stage C1 candidate SHA:
+  `f6781255375d694744048b509d7f0b52f1eeb1c9ddc7e6eb0142072cb159b625`
+
+Append a factual Stage C2A entry to `docs/DECISION_LOG.md`.
+
+Do not rewrite previous history.
+
+## Validation
+
+Run:
+
+pnpm run typecheck
+
+PORT=3000 BASE_PATH=/ pnpm --filter @workspace/playsyncer run build
+
+pnpm --filter @workspace/api-server run test
+
+Provide evidence that:
+
+1. Create still works.
+2. Edit still works.
+3. Status still works.
+4. Games list synchronization completes before modal closure.
+5. Rapid repeated click sends only one request.
+6. Escape and backdrop cannot close a pending modal.
+7. Failed Status displays a visible error.
+8. Failed Create/Edit remains open and can be retried.
+9. No migration or direct SQL was executed.
+10. Delete was not implemented.
+
+Use the existing synthetic Game for Edit and Status verification.
+
+Do not delete it.
+
+Synthetic Game ID:
+
+bea1fcbe-137f-4221-b877-1d71c2a64b88
+
+## Required report
+
+Return:
+
+1. Exact files changed
+2. Diff summary
+3. Query synchronization evidence
+4. Error-display evidence
+5. Double-submit evidence
+6. Typecheck output
+7. Build output
+8. Backend test output
+9. Browser console result
+10. Documentation changes
+11. Database impact
+12. Known limitations
+13. Exported ZIP SHA-256
+14. Confirmation that Delete and Stage C2B were not started
+
+Stop after Stage C2A.

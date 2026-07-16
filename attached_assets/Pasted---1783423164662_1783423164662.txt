@@ -1,0 +1,130 @@
+قبل از پاسخ دادن عجله نکن. اول مسئله، سورس، فایل‌ها، وابستگی‌ها، ریسک‌ها و اثرات جانبی را عمیق تحلیل کن. اگر شواهد کافی از سورس، لاگ، diff یا تست نداری، ادعای قطعی نکن. خروجی سطحی، حدسی، تبلیغاتی یا سریع نده. هر پیشنهاد کدنویسی باید کوچک، قابل تست، قابل rollback و سازگار با standards پروژه باشد. اگر چیزی خارج از scope است فقط گزارش بده و بدون تأیید من patch یا refactor پیشنهاد نکن. قبل از ارائه راه‌حل، تفاوت Fact، Assumption، Risk و Recommendation را مشخص کن.
+
+Act as a Senior Frontend Engineer and Release-Safety Reviewer.
+
+We are working on PlaySyncer.
+
+Current task:
+Phase A — Platform & Account Form Logic Update
+
+Important limits:
+Do NOT redesign the whole app.
+Do NOT change SmartSearch position or behavior in this phase.
+Do NOT add backend, database, auth, WooCommerce, orders, push delivery, or localStorage.
+Keep all changes frontend/mock-state only.
+
+Inspect first:
+- src/domain/games/types.ts
+- src/domain/games/platform.ts
+- src/domain/accounts/types.ts
+- src/domain/slots/types.ts
+- src/hooks/useGames.tsx
+- src/components/GameCard.tsx
+- src/components/AccountFormModal.tsx
+- src/components/AccountCard.tsx
+- src/pages/GameDetailPage.tsx
+- src/mocks/playSyncerMockData.ts
+
+Required changes:
+
+1. Add new game platform type:
+- PS5_ONLY
+- PS4_AND_PS5
+- PS4_ONLY
+
+This overrides the previous rule that PS4_ONLY did not exist.
+
+2. Add visible badge/label support for PS4_ONLY everywhere platform badges are shown.
+
+Suggested labels:
+- PS5 Only
+- PS4 + PS5
+- PS4 Only
+
+3. Remove Account Platform Type from account add/edit forms.
+
+The admin should no longer select account platform manually.
+Account capacities must be derived automatically from the parent game platform.
+
+Remove account platform from:
+- Add Account form UI
+- Edit Account form UI
+- account form validation
+- any user-facing account form label
+
+4. Capacity generation rules:
+
+When creating a new account, generate capacities based on the parent game platform:
+
+If game platform is PS5_ONLY:
+- Z2 PS5 #1
+- Z2 PS5 #2
+- Z3 PS5
+
+If game platform is PS4_AND_PS5:
+- Z2 PS5 #1
+- Z2 PS5 #2
+- Z2 PS4 #1
+- Z3 PS5
+
+If game platform is PS4_ONLY:
+- Z2 PS4 #1
+
+Use “ظرفیت” in visible UI, not “اسلات”.
+Internal type/file names may remain slot-related if renaming them is risky.
+
+5. If a game platform is edited, handle existing accounts safely.
+
+For this frontend/mock phase:
+- Regenerate account capacities based on the new game platform if needed.
+- Preserve account identity and account fields.
+- If changing platform may remove capacity/customer data, show a clear warning or mention it in final notes.
+- Keep it simple and safe.
+
+6. Make all account form fields required, except the removed account platform field.
+
+Required fields:
+- Email
+- PlayStation Password
+- Email Password
+- Online ID
+- Birth Date
+- Family Management Email
+- 2-step verification codes
+
+Show (*) required marker clearly.
+Validation must prevent empty values after trim.
+Backup codes must not be empty.
+Keep duplicate email validation inside the same game if it already exists.
+
+7. Keep visible account labels consistent:
+- Email
+- PlayStation Password
+- Email Password
+- Online ID
+- Birth Date
+- Family Management Email
+- 2-step verification codes
+- ظرفیت
+
+8. Quality checks:
+Run:
+- pnpm run typecheck
+- pnpm run build
+
+If lint exists:
+- pnpm run lint
+
+Fix TypeScript/build errors.
+
+Final response must include:
+- changed files
+- exact changes made
+- confirmation that PS4_ONLY is supported
+- confirmation that account platform field was removed
+- confirmation that capacities are generated from game platform
+- confirmation that all account form fields are required
+- confirmation that no SmartSearch changes were made in this phase
+- confirmation that no backend/database/auth/WooCommerce/orders/push delivery/localStorage was added
+- test results
+- remaining risks or follow-up notes

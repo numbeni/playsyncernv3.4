@@ -1,0 +1,80 @@
+Act as a Senior Frontend Engineer and UI/UX Debugging Reviewer.
+
+We are working on PlaySyncer.
+Current phase: Account Workspace frontend polish.
+
+Do not redesign the whole app.
+Do not add backend, database, auth, WooCommerce, orders, push delivery, or real permissions.
+Only apply the frontend/UI fixes listed below.
+
+Inspect these files first:
+- artifacts/playsyncer/src/App.tsx
+- artifacts/playsyncer/src/index.css
+- artifacts/playsyncer/src/pages/GameDetailPage.tsx
+- artifacts/playsyncer/src/components/AccountCard.tsx
+- artifacts/playsyncer/src/components/AccountDetailsModal.tsx
+- artifacts/playsyncer/src/components/GameCard.tsx
+
+Required fixes:
+
+1. Move the main page scrollbar to the left side.
+The current scrollbar appears on the right side near the right sidebar, which is not suitable for this RTL layout.
+Fix it safely without breaking RTL text direction or sidebar layout.
+
+2. When entering any game account page, always start from the top of that page.
+On route change to `/games/:gameId`, scroll the page/main scroll container to top.
+
+3. Improve AccountCard expand/collapse animation.
+The current collapsible cards do not open/close smoothly.
+Make the animation softer and cleaner.
+Do not replace the whole card design.
+
+4. Add Expand All / Collapse All accounts button.
+Place it above the account list in GameDetailPage, in a clean and logical position.
+It should expand all account cards and collapse all account cards.
+If AccountCard currently owns its own open state, make it support controlled expanded state from GameDetailPage.
+
+5. Show all backup codes in the main expanded AccountCard.
+Currently backup codes are truncated in the main account card.
+Show all 2-step verification codes completely and make them copyable.
+Do not show them only in the details modal.
+
+6. In Games page, clicking the game cover/image should navigate to that game account workspace.
+Currently navigation works mainly through the “اکانت‌ها” action.
+Keep that action, but also make the image clickable.
+
+7. Replace user-facing “اسلات” / “slot” wording with “ظرفیت”.
+Do this only in visible UI text.
+Do not rename internal domain files/types unless necessary.
+Examples:
+- “اسلات‌ها” → “ظرفیت‌ها”
+- “کل اسلات‌ها” → “کل ظرفیت‌ها”
+
+8. In the account capacity/status section, do not mask customer phone numbers.
+Phone numbers must be shown fully and be copyable.
+
+9. In the main expanded AccountCard:
+- Remove Online ID from the first-view/main info area.
+- Online ID should only appear inside “مشاهده اطلاعات اکانت”.
+- Use the freed space to make the backup codes area larger vertically.
+- Rename visible labels:
+  - “ایمیل” → “Email”
+  - “رمز عبور” → “PlayStation Password”
+  - “کدهای پشتیبان” → “2-step verification codes”
+
+10. In AccountDetailsModal:
+- Replace the label “Password” or “رمز عبور” with “PlayStation Password”.
+Keep the rest of the details modal structure.
+
+Quality:
+- Keep UI clean and compact.
+- Preserve current visual direction.
+- Run typecheck/build and fix errors:
+  - pnpm run typecheck
+  - pnpm run build
+
+Final response must include:
+- changed files
+- exact UI fixes made
+- confirmation that no backend/database/auth/WooCommerce/orders logic was added
+- test results

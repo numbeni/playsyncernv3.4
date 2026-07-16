@@ -1,0 +1,150 @@
+Apply PS-02A Fix1 only.
+
+Do not start PS-02B and do not modify the Games frontend.
+
+Read:
+
+- AGENTS.md
+- docs/PRODUCT_RULES.md
+- docs/CURRENT_PHASE.md
+- docs/MIGRATIONS.md
+
+Fix only the following verified PS-02A defects.
+
+## 1. Make migration 0001 safe for an existing populated database
+
+Do not modify migration 0000.
+
+Correct migration 0001 so it safely upgrades existing Games rows.
+
+For game status:
+
+- remove the old default safely
+- temporarily convert the column to text
+- convert existing `active` and `inactive` values to `ACTIVE` and `INACTIVE`
+- recreate/use the uppercase enum
+- cast the migrated values safely
+- restore the `ACTIVE` default
+
+For title normalization:
+
+- add `title_normalized` initially as nullable
+- normalize and backfill every existing Game title
+- trim surrounding whitespace
+- collapse repeated internal whitespace in the stored display title
+- populate the lowercase normalized title
+- reject blank normalized titles
+- detect normalized duplicate titles before creating the unique index
+- do not silently delete, rename, or merge conflicting data
+- fail migration with a clear diagnostic when conflicting legacy titles exist
+- set `title_normalized` to NOT NULL only after successful backfill
+
+Create a full unique index on `title_normalized`.
+
+Do not use a partial `WHERE deleted_at IS NULL` index.
+
+## 2. Correct Account-history detection
+
+Account history means every Account row that has ever referenced the Game.
+
+Remove the `deleted_at IS NULL` condition from the history check.
+
+Soft-deleted Accounts must still:
+
+- lock Game platform changes
+- block Game hard deletion
+
+Return controlled HTTP 409 rather than allowing a foreign-key error to become HTTP 500.
+
+## 3. Correct the platform no-op behavior
+
+Load the current Game and enforce the Account-history guard only when:
+
+requested platform !== current stored platform
+
+Sending the existing platform value must not be treated as a platform change.
+
+A title or status edit that includes the unchanged platform must remain allowed.
+
+## 4. Correct title validation and storage
+
+Reject whitespace-only titles with HTTP 400 on create and update.
+
+Store a clean display title:
+
+- trim outer whitespace
+- collapse repeated internal whitespace
+- preserve display casing
+
+Store the lowercase canonical value in `title_normalized`.
+
+Ensure the final canonical display title length is between 1 and 120 characters.
+
+Reuse centralized helper logic instead of duplicating normalization.
+
+## 5. Add focused regression tests
+
+Add tests proving:
+
+- migration upgrades populated lowercase-status Games successfully
+- existing titles are backfilled correctly
+- conflicting normalized legacy titles cause a clear migration failure
+- whitespace-only create returns 400
+- whitespace-only update returns 400
+- repeated internal spaces are collapsed in the stored title
+- same-platform update remains allowed when an Account exists
+- actual platform change remains blocked
+- a soft-deleted Account still blocks platform change
+- a soft-deleted Account still blocks Game hard deletion
+- blocked deletion returns 409, not 500
+- global normalized-title uniqueness also covers legacy soft-deleted Game rows
+
+Do not apply migrations or tests to the shared Replit database.
+
+Use disposable PostgreSQL only.
+
+## 6. Repository cleanup
+
+Remove the unrelated attached prompt file from the PS-02A changes:
+
+attached_assets/Pasted-Start-PS-02A-...
+
+Do not remove unrelated pre-existing project files.
+
+## Validation
+
+Run:
+
+- repository typecheck
+- DB helper tests
+- Games API tests
+- API build
+- OpenAPI/codegen verification
+- clean-database migration-chain verification
+- populated-database upgrade verification
+
+Confirm:
+
+- migration 0000 remains unchanged
+- no drizzle push is run or reintroduced
+- Games frontend remains unchanged
+- shared database remains untouched
+- Order-history protection remains explicitly deferred
+
+## Delivery
+
+Provide:
+
+1. concise correction summary
+2. files changed
+3. exact test results
+4. clean and populated migration verification results
+5. shared database impact
+6. remaining deferred items
+7. git status --short
+8. corrected phase diff
+9. complete clean project ZIP excluding node_modules, .git, caches, temporary PostgreSQL data, tsbuildinfo files, and previous exports
+
+Keep docs/CURRENT_PHASE.md as PS-02A ACTIVE.
+Do not mark the phase completed.
+Do not make unrelated changes.

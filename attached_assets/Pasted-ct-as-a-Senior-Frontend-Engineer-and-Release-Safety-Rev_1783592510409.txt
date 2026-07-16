@@ -1,0 +1,193 @@
+ct as a Senior Frontend Engineer and Release-Safety Reviewer.
+
+We are working on PlaySyncer.
+
+Current task:
+Add a global unique account identifier while preserving the current per-game account numbering.
+
+Important context:
+Currently each game has its own per-game account number such as:
+- #FC25-001
+- #FC25-002
+- #GTA6-001
+
+This behavior is correct and must remain.
+
+But we also need a second identifier that is globally unique across all accounts in all games, so admins can refer to any account by one stable account code.
+
+Example:
+- Per-game number: #FC25-003
+- Global Account ID: ACC-000128
+
+Important limits:
+Do NOT redesign the app.
+Do NOT remove the current per-game account number.
+Do NOT add backend.
+Do NOT add database.
+Do NOT add authentication.
+Do NOT add WooCommerce.
+Do NOT add orders.
+Do NOT add push delivery.
+Do NOT add localStorage.
+Keep all changes frontend/mock-state only.
+
+Inspect first:
+- src/domain/accounts/types.ts
+- src/hooks/useGames.tsx
+- src/components/AccountCard.tsx
+- src/components/AccountDetailsModal.tsx
+- src/components/AccountFormModal.tsx
+- src/components/SmartSearch.tsx
+- src/mocks/playSyncerMockData.ts
+
+Required changes:
+
+1. Preserve current per-game account number
+
+Do NOT remove or replace the current account number behavior.
+
+The current per-game account number must still be generated per game and shown inside each Game Workspace.
+
+Examples:
+- #FC25-001
+- #FC25-002
+- #GTA6-001
+
+This number is used for local ordering/display inside each game.
+
+2. Add a new global unique account identifier
+
+Add a new field to Account type.
+
+Preferred field name:
+- accountCode
+
+Preferred user-facing format:
+- ACC-000001
+- ACC-000002
+- ACC-000128
+
+This accountCode must be unique across all accounts in all games.
+
+3. Generate accountCode automatically
+
+When creating a new account:
+- generate the next accountCode based on all existing accounts across all games
+- do not generate it based only on accounts of the current game
+- admin must not manually enter this value
+- accountCode must not be editable from the account form
+
+For this frontend/mock phase:
+- calculating the next number from current in-memory data is acceptable
+- avoid reusing an existing accountCode during the current session
+
+Example:
+If the highest existing accountCode is ACC-000128, the next account should be ACC-000129.
+
+4. Update mock data
+
+Update all existing mock accounts so every account has a unique accountCode.
+
+Example:
+- accountCode: "ACC-000001"
+
+Make sure there are no duplicate accountCode values in mock data.
+
+5. Update AccountCard UI
+
+In AccountCard, show both identifiers clearly but compactly:
+
+- شناسه اکانت: ACC-000128
+- شماره در بازی: #FC25-003
+
+Keep the current visual direction.
+Do not make the card cluttered.
+A compact badge/chip or small metadata row is acceptable.
+
+6. Update AccountDetailsModal
+
+Show the global unique account identifier inside account details.
+
+Use a clear English label:
+- Account ID
+
+Example:
+Account ID: ACC-000128
+
+Also preserve the per-game number if it is already shown or useful.
+
+7. Update SmartSearch
+
+SmartSearch must search by:
+- accountCode / global Account ID
+- per-game account number
+- existing account fields
+
+The global account identifier must be searchable in a user-friendly way.
+
+Support these search formats:
+- Exact format: ACC-000128
+- Lowercase format: acc-000128
+- Numeric part only: 000128
+- Short numeric part: 128
+- Compact format if practical: ACC128
+
+Normalize search input safely:
+- trim whitespace
+- case-insensitive matching
+- allow matching accountCode with or without dash
+- allow matching numeric part with or without leading zeros where practical
+
+When an account matches by global Account ID, search result should clearly show:
+- Result type: اکانت
+- Account ID: ACC-000128
+- Per-game number: #FC25-003
+- Game title
+- Match reason: Matched by Account ID
+
+Clicking the result should navigate to the related Game Workspace and highlight/open the matched account if this behavior already exists.
+
+Do not expose sensitive fields in the search preview.
+
+8. Do not break existing account numbering
+
+Adding a new account inside a game should still generate:
+- the next per-game account number for that specific game
+- a new unique global accountCode across the whole app
+
+Both values must exist together.
+
+Example:
+For FC 25:
+- number: #FC25-004
+- accountCode: ACC-000129
+
+9. Search compatibility
+
+After add/edit/delete account:
+- SmartSearch must not crash
+- deleted account accountCode should not appear in visible search results if search reads current state
+- if SmartSearch still depends on static mock data and cannot fully reflect runtime state, minimally fix it or report the remaining limitation clearly
+
+10. Quality checks
+
+Run:
+- pnpm run typecheck
+- pnpm run build
+
+If lint exists:
+- pnpm run lint
+
+Fix TypeScript/build errors.
+
+Final response must include:
+- changed files
+- exact changes made
+- confirmation that per-game numbering is preserved
+- confirmation that global unique accountCode was added
+- confirmation that accountCode is auto-generated and not manually editable
+- confirmation that accountCode is searchable by ACC-000128, acc-000128, 000128, 128, and ACC128 if supported
+- confirmation that AccountCard and AccountDetailsModal show the new Account ID
+- confirmation that no backend/database/auth/WooCommerce/orders/push delivery/localStorage was added
+- test results
+- remaining risks or follow-up notes

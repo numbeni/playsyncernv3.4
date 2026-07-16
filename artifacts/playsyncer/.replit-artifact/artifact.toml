@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "PlaySyncer"
+version = "1.0.0"
+id = "artifacts/playsyncer"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24351
+
+[services.development]
+run = "pnpm --filter @workspace/playsyncer run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/playsyncer", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/playsyncer/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24351"
+BASE_PATH = "/"

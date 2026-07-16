@@ -1,0 +1,148 @@
+You are the Senior React/TypeScript and Release-Safety Engineer for PlaySyncer.
+
+Complete only:
+
+PS-02B — Stage C2B Fix and Verification
+
+Do not start Stage D.
+
+The goal is to fix the remaining important issues, verify the complete Games CRUD flow, and move the stage to `STAGE_C_READY_FOR_REVIEW`.
+
+## 1. Database readiness
+
+This is a new Replit workspace and the Games API is blocked because the `games` table is missing.
+
+First perform a read-only check of:
+
+- database identity without exposing credentials
+- existing migration records
+- existing tables
+- presence of unknown data
+
+If the database is not clearly isolated and empty, stop and report the blocker.
+
+Only if it is confirmed as the isolated new-workspace database, apply the existing versioned migrations using:
+
+pnpm --filter @workspace/db run db:migrate
+
+Do not use:
+
+- drizzle-kit push
+- direct SQL
+- new migrations
+- migration-file edits
+- manual rollback
+
+## 2. Fix the remaining mutation issues
+
+In `useGames.tsx`, remove silent lock returns such as:
+
+if (lockRef.current) return;
+
+A blocked Create, Edit, Status, or Delete operation must never look successful to the caller.
+
+Return the existing in-flight Promise or throw a controlled pending-operation error.
+
+For every mutation:
+
+- send only one API request
+- await the API result
+- await the Games query refetch
+- close the modal/dialog only after synchronization
+- do not update Games through local-only state
+
+## 3. Fix modal and confirmation locking
+
+In `GameFormModal` and `ConfirmDialog`:
+
+- activate the ref lock before state changes or awaiting
+- prevent rapid duplicate clicks
+- block Escape, backdrop, Close, and Cancel while pending
+- keep the lock until successful close/unmount
+- release it after failure so retry remains possible
+- keep errors visible after failure
+
+## 4. Correct the delete message
+
+For a Game with Account history, display:
+
+«این بازی سابقه اکانت دارد و قابل حذف نیست. برای حفظ سوابق، بازی را غیرفعال کنید.»
+
+Do not suggest deleting Accounts to make the Game deletable.
+
+## 5. Verify the complete Games CRUD flow
+
+Create one synthetic Game through the browser UI:
+
+PS02B C2B Runtime Test <timestamp>
+
+Verify:
+
+1. Create works and rapid clicks send only one POST.
+2. Backend UUID is used.
+3. Refresh preserves the Game.
+4. Edit title, cover URL, cleared cover URL, and Platform persist.
+5. ACTIVE → INACTIVE → ACTIVE persists after refresh.
+6. Delete sends only one DELETE.
+7. Delete waits for API success and Games-list refetch.
+8. Deleted Game does not return after refresh.
+9. SmartSearch no longer returns the deleted Game.
+10. Duplicate-title error keeps the form open.
+11. Failed Status/Delete keeps the dialog open and shows a safe Persian error.
+12. Browser console has no new errors.
+
+Delete only the synthetic Game created for this verification.
+
+Do not modify or delete unknown records.
+
+## 6. Validation
+
+Run:
+
+pnpm run typecheck
+
+PORT=3000 BASE_PATH=/ pnpm --filter @workspace/playsyncer run build
+
+pnpm --filter @workspace/api-server run test
+
+Do not add dependencies or modify Accounts, Capacities, Orders, OpenAPI, generated clients, or schema files.
+
+## 7. Documentation
+
+After successful verification, update:
+
+docs/CURRENT_PHASE.md
+
+Status:
+
+STAGE_C_READY_FOR_REVIEW
+
+Append a factual result to:
+
+docs/DECISION_LOG.md
+
+Record:
+
+- database readiness and migrations applied
+- mutation-lock fixes
+- CRUD verification
+- synthetic Game UUID and deletion
+- automated-check results
+- no drizzle push or direct SQL
+- confirmation that Stage D was not started
+
+Return:
+
+- files changed
+- concise diff summary
+- database evidence
+- CRUD verification evidence
+- typecheck/build/backend-test outputs
+- screenshots and browser-console result
+- database impact
+- final ZIP filename and SHA-256
+
+Stop after Stage C2B.
+
+Do not start Stage D.
+Do not mark PS-02B completed.

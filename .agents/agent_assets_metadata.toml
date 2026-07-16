@@ -1,0 +1,38 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "QmJtoGcr8RMI9LXQaHPzN"
+uri = "file://exports/playsyncer-review.zip"
+type = "unspecified"
+title = "PlaySyncer project ZIP (review candidate)"
+
+[[outputs]]
+id = "dKRPCxfjJOv54ThTtBl-U"
+uri = "file://exports/schema-review.diff"
+type = "unspecified"
+title = "Schema alignment git diff"
+
+[[outputs]]
+id = "MBO6qA-97JgYaGNimMw5M"
+uri = "file://exports/playsyncer-baseline-restored.zip"
+type = "unspecified"
+title = "PlaySyncer v3.1 baseline (restored) ZIP"
+
+[[outputs]]
+id = "L8Ki37_erDkoXtm-DKJHg"
+uri = "file://exports/final-diff-vs-baseline.diff"
+type = "unspecified"
+title = "Final diff vs baseline (schema files)"
+
+[[outputs]]
+id = "JruJ2_ROhprkypcZ-KV5v"
+uri = "file://exports/playsyncer-ps01.zip"
+type = "unspecified"
+title = "PlaySyncer PS-01 foundation build (ZIP)"
+
+[[outputs]]
+id = "fHK99vAiiXGXoizrS6iU4"
+uri = "file://exports/ps01-final.diff"
+type = "unspecified"
+title = "PS-01 exact git diff"

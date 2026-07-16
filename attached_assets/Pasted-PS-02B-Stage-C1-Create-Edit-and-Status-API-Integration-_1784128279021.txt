@@ -1,0 +1,268 @@
+PS-02B — Stage C1: Create, Edit and Status API Integration
+
+Stage B Fix1 has been accepted.
+
+Proceed only with Stage C1.
+
+Do not start Stage C2.
+Do not implement Delete Game in this stage.
+
+Baseline SHA-256:
+
+fa294680fa18e84c7522acfbe10e6d257c4df40b1cdeda09e857830acd618a2d
+
+## Objective
+
+Connect these Games operations to the existing backend API:
+
+- Create Game
+- Edit Game
+- Activate Game
+- Inactivate Game
+
+All operations must persist through the API and remain correct after browser refresh.
+
+## Documentation preflight
+
+Update:
+
+docs/CURRENT_PHASE.md
+
+Set status to:
+
+STAGE_C1_IN_PROGRESS
+
+Record the baseline SHA above.
+
+Append a factual entry to:
+
+docs/DECISION_LOG.md
+
+Record that:
+
+- Stage C1 authorizes Create, Edit and Status writes through the existing Games API.
+- Delete remains outside this stage.
+- No migration or schema change is authorized.
+- Account, Capacity and Order integration remain out of scope.
+
+Do not rewrite previous entries.
+
+## Database restrictions
+
+Do not run:
+
+- db:migrate
+- drizzle-kit push
+- direct SQL
+- schema changes
+- rollback scripts
+
+Only synthetic Game records created through the existing API may be used for testing.
+
+Do not modify or delete:
+
+- FIFA 16
+- Rocket League
+
+## API integration
+
+Use the existing generated client from:
+
+@workspace/api-client-react
+
+Use:
+
+- useCreateGame
+- useUpdateGame
+- getListGamesQueryKey
+
+Do not create a handwritten fetch layer.
+
+Do not modify generated API files or OpenAPI.
+
+Do not add dependencies.
+
+## Create Game
+
+Restore the Add Game button and existing form.
+
+Required behavior:
+
+- Submit calls POST /api/games.
+- Backend-generated UUID is used.
+- Submit is disabled while pending.
+- Double submission is prevented.
+- Modal closes only after success.
+- Modal remains open on failure.
+- Games query is invalidated after success.
+- Refresh preserves the created Game.
+- Duplicate normalized title errors are displayed clearly.
+
+If cover input is empty:
+
+- omit coverUrl
+- do not store a placeholder URL
+
+## Edit Game
+
+Restore Edit Game.
+
+Connect it to:
+
+PATCH /api/games/:id
+
+Allow editing:
+
+- title
+- coverUrl
+- platform
+- status
+
+Required behavior:
+
+- Existing values appear correctly.
+- Submit is disabled while pending.
+- Modal closes only after success.
+- Error remains visible inside the modal.
+- Refresh preserves the edit.
+
+When accountCount > 0:
+
+- Platform controls must be disabled.
+- Show an explanation that Platform cannot change after Accounts exist.
+
+Backend remains authoritative.
+
+Do not regenerate Account capacities.
+
+## ACTIVE / INACTIVE
+
+Restore the Status action.
+
+Required behavior:
+
+1. Show confirmation dialog.
+2. Send only the new status through PATCH.
+3. Disable confirm while pending.
+4. Prevent repeated requests.
+5. Close only after success.
+6. Refresh must preserve the status.
+7. Inactive Games must remain visible.
+
+## Error handling
+
+Handle at minimum:
+
+- 400 validation errors
+- 404 missing Game
+- 409 duplicate title
+- 409 Platform lock
+- Network and 500 errors
+
+Use safe Persian messages.
+
+Do not expose stack traces or internal server details.
+
+Do not use broad any or unsafe casts.
+
+## Stage C1 test record
+
+Create one synthetic Game through the UI:
+
+PS02B C1 Test <timestamp>
+
+Use it for:
+
+- Create
+- Refresh
+- Edit title
+- Change cover
+- Change Platform while accountCount is zero
+- ACTIVE → INACTIVE
+- INACTIVE → ACTIVE
+
+Do not delete this Game in Stage C1.
+
+Keep its ID for Stage C2 deletion testing.
+
+## Automated validation
+
+Run:
+
+pnpm run typecheck
+
+Run:
+
+PORT=3000 BASE_PATH=/ pnpm --filter @workspace/playsyncer run build
+
+Run:
+
+pnpm --filter @workspace/api-server run test
+
+Do not claim lint or frontend tests passed unless an actual script exists.
+
+## Manual evidence
+
+Provide evidence that:
+
+1. Add Game is restored.
+2. Create uses POST /api/games.
+3. Double click creates only one Game.
+4. Backend UUID is returned.
+5. Refresh preserves the Game.
+6. Duplicate title is rejected.
+7. Edit uses PATCH.
+8. Title edit persists.
+9. Cover edit or clear persists.
+10. Platform edit works while accountCount is zero.
+11. ACTIVE and INACTIVE both persist.
+12. SmartSearch reflects Create and Edit.
+13. Account Workspace remains in the pending-integration state.
+14. No mock Game returns.
+15. Browser console has no new errors.
+16. No migration or direct SQL was executed.
+
+## Completion documentation
+
+After validation:
+
+Set docs/CURRENT_PHASE.md status to:
+
+STAGE_C1_READY_FOR_REVIEW
+
+Append a Stage C1 entry to docs/DECISION_LOG.md containing:
+
+- exact API mutations connected
+- synthetic Game ID
+- validation performed
+- no migration/schema changes
+- known limitations
+- confirmation that Delete and Stage C2 were not started
+
+## Required report
+
+Return:
+
+1. Exact files changed
+2. Diff summary
+3. Create evidence
+4. Edit evidence
+5. Status evidence
+6. Error-handling evidence
+7. Double-submit evidence
+8. Cache invalidation strategy
+9. Typecheck output
+10. Build output
+11. Backend test output
+12. Screenshots
+13. Browser console result
+14. Synthetic Game ID
+15. Database impact
+16. Known limitations
+17. Rollback instructions
+18. Confirmation that Stage C2 was not started
+
+Stop after Stage C1.
+
+Do not implement Delete Game.
+Do not start Stage C2 or Stage D.

@@ -1,0 +1,179 @@
+PS-02B — Stage C2B: Final Mutation Lock and Delete Integration
+
+Read and follow:
+
+- AGENTS.md
+- docs/CURRENT_PHASE.md
+- docs/PRODUCT_RULES.md
+- docs/MIGRATIONS.md
+- docs/DECISION_LOG.md
+
+Proceed only with Stage C2B.
+
+Do not start Stage D.
+
+## Preflight
+
+Verify the current source matches the imported baseline:
+
+File:
+playsyncernv3.3-main (6).zip
+
+SHA-256:
+3548726894e3a4875dd273430d7d4f9f4f10e428afccfc3afe8f49c1c92aee22
+
+Because this is a new Replit workspace, perform a read-only API/database readiness check first.
+
+If the Games API cannot operate because the database schema or migrations are unavailable:
+
+- stop
+- report the exact blocker
+- do not run migrations
+- do not run direct SQL
+- do not use drizzle-kit push
+
+## Part 1 — Immediate UI mutation lock
+
+Add a synchronous local ref lock inside:
+
+- GameFormModal
+- ConfirmDialog
+
+The lock must activate before setState or awaiting a Promise.
+
+Required behavior:
+
+- rapid clicks cannot call onSave or onConfirm twice
+- Create, Edit and Status cannot appear successful when a request was blocked
+- modal/dialog cannot close through Escape, backdrop, Cancel or Close while pending
+- lock remains active during successful close
+- lock is released after failure so retry is possible
+
+Do not rely only on mutationKey or Provider-level locks.
+
+## Part 2 — Delete Game integration
+
+Use the existing generated client:
+
+- useDeleteGame
+- getListGamesQueryKey
+
+Do not create handwritten fetch calls.
+
+Restore Delete actions in the existing Games UI.
+
+For `accountCount > 0`:
+
+- do not send DELETE
+- explain that the Game has Accounts
+- recommend changing it to INACTIVE
+
+For `accountCount = 0`:
+
+1. show destructive confirmation
+2. prevent rapid duplicate confirmation
+3. call DELETE /api/games/:id
+4. await API success
+5. await Games list refetch
+6. close only after synchronization
+7. do not remove the Game through local state
+8. confirm Refresh does not restore it
+
+For Backend 409:
+
+- keep the dialog open
+- show a safe Persian dependency message
+- do not remove the Game
+- recommend INACTIVE
+
+Handle 404, network and server errors without exposing internal details.
+
+## Test data
+
+Before deleting anything, list exact Game IDs and `accountCount`.
+
+Do not identify or delete records only by title.
+
+Do not delete:
+
+- Rocket League
+- FIFA 16
+- any uncertain or non-synthetic Game
+
+A clearly identified synthetic Game with `accountCount = 0` may be used for Delete testing.
+
+Do not create Accounts or Orders to force dependency tests.
+
+## Restrictions
+
+Do not modify:
+
+- backend schema
+- migrations
+- OpenAPI
+- generated clients
+- Account or Capacity code
+- `.agents/memory`
+
+Do not add dependencies.
+
+Do not run database administration commands.
+
+## Validation
+
+Run:
+
+pnpm run typecheck
+
+PORT=3000 BASE_PATH=/ pnpm --filter @workspace/playsyncer run build
+
+pnpm --filter @workspace/api-server run test
+
+Verify:
+
+1. Create/Edit/Status still work.
+2. Rapid clicks execute only one caller operation.
+3. Pending modal/dialog cannot close.
+4. Status errors remain visible and retryable.
+5. Delete empty Game succeeds.
+6. Failed Delete keeps the Game visible.
+7. Deleted Game does not return after Refresh.
+8. SmartSearch reflects deletion.
+9. Account Workspace remains in pending-integration state.
+10. No mock Game returns.
+11. Browser console has no new errors.
+12. No migration or direct SQL was run.
+
+## Documentation
+
+At start set CURRENT_PHASE status to:
+
+STAGE_C2B_IN_PROGRESS
+
+After successful validation set it to:
+
+STAGE_C_READY_FOR_REVIEW
+
+Append the factual Stage C2B result to DECISION_LOG.
+
+Do not mark PS-02B completed.
+
+## Report
+
+Return:
+
+- exact files changed
+- concise diff summary
+- UI-lock correction
+- Delete evidence
+- error-handling evidence
+- Games deleted and preserved with exact IDs
+- typecheck, build and backend test outputs
+- screenshots and console result
+- database impact
+- known limitations
+- rollback instructions
+- final exported ZIP SHA-256
+- confirmation that Stage D was not started
+
+Stop after Stage C2B.

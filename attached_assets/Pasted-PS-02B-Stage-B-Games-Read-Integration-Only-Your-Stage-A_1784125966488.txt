@@ -1,0 +1,163 @@
+PS-02B Stage B — Games Read Integration Only
+
+Your Stage A audit is accepted with required corrections.
+
+Do not begin Games write operations in this stage.
+
+Before modifying source files, verify that:
+
+- docs/CURRENT_PHASE.md identifies PS-02B as the active phase
+- docs/DECISION_LOG.md contains the PS-02B activation decision
+
+If the repository documentation still identifies PS-02A as active, stop and report the documentation mismatch. Do not implement under conflicting phase documentation.
+
+## Command Center Decisions
+
+### 1. Runtime authority
+
+The real backend API is the only runtime authority for Games.
+
+Do not merge backend Games with mock Accounts by:
+
+- Game ID
+- title
+- normalized title
+- array position
+- manually maintained mapping
+- any other inferred relationship
+
+Backend UUID Game IDs and legacy mock Game IDs are unrelated identities.
+
+A hidden hybrid Game model is prohibited.
+
+### 2. Account Workspace boundary
+
+Account and Capacity backend integration remains outside PS-02B.
+
+For backend Games:
+
+- Game metadata must come from the real Games API.
+- Do not attach mock Accounts or mock Capacities to the API Game object.
+- Do not add `accounts` to the API Game DTO.
+- Do not pretend mock Account records belong to backend Games.
+- Game Detail must not crash.
+- Game Detail must show a controlled temporary Account-integration state when Account data is not integrated.
+
+The temporary state must clearly indicate that Account management is not connected in this phase.
+
+Do not delete Account Workspace UI components or broadly refactor them.
+
+### 3. Game Card statistics
+
+The current `GET /api/games` contract exposes only `accountCount`.
+
+Do not derive Game Card statistics from mock Accounts.
+
+During Stage B:
+
+- display only statistics directly provided by the backend
+- `accountCount` may be displayed
+- unsupported statistics such as active Accounts, capacity count and assignment count must not display mock or invented values
+- minimally adapt the Game Card UI to avoid misleading data
+- do not change the backend API
+- do not change the database schema
+- do not create a migration
+
+A fuller Game Card statistics projection will be handled as a separate backend contract decision.
+
+### 4. Smart Search
+
+SmartSearch currently imports the complete mock Games tree independently.
+
+During Stage B:
+
+- Game search results must use the live Games query
+- do not continue showing mock Games as real search results
+- do not attach mock Account or Customer search results to backend Games
+- Account and Customer search may be temporarily unavailable until their backend integration phase
+- do not implement Smart Search backend APIs in PS-02B
+
+### 5. Confirmed integration facts
+
+Direct source review has confirmed:
+
+- QueryClientProvider is currently absent from App.tsx and main.tsx.
+- The generated Games client uses same-origin `/api/games`.
+- Replit Artifact routing exposes the API under `/api`.
+- DELETE `/api/games/:id` currently returns HTTP 200 with `{ "ok": true }`.
+- No new dependency is required.
+
+## Stage B Objective
+
+Implement read-only Games API integration.
+
+Required work:
+
+1. Register one stable TanStack QueryClient and QueryClientProvider.
+2. Use the existing generated `@workspace/api-client-react` Games query.
+3. Load Games from `GET /api/games`.
+4. Use backend Game fields:
+   - UUID `id`
+   - `title`
+   - `coverUrl`
+   - uppercase `status`
+   - `platform`
+   - `accountCount`
+5. Add controlled:
+   - loading state
+   - empty state
+   - error state
+   - retry action
+6. Ensure browser refresh reloads Games from the backend rather than restoring mock Games.
+7. Remove Games mock data as the runtime authority of GamesPage.
+8. Remove the independent mock Games authority from SmartSearch.
+9. Ensure Game Detail resolves backend Game metadata safely.
+10. Prevent Account Workspace from receiving unrelated mock data.
+11. Disable or hide Create/Edit/Delete/Status actions during this read-only stage if they would otherwise perform local-only mutations.
+
+Do not connect write mutations yet.
+
+## Type discipline
+
+Do not force the generated API DTO into the existing nested mock Game interface.
+
+Prefer explicit separation such as:
+
+- backend/API Game model
+- Account Workspace local or legacy model
+
+Do not create one interface that falsely claims API Games contain Accounts.
+
+Do not use unsafe casts such as:
+
+- `as Game`
+- `as unknown as Game`
+- broad `any`
+- fabricated default Account arrays presented as backend data
+
+An empty array may only be used inside an explicitly named compatibility/view state and must not imply that the backend returned zero Accounts when Accounts were not queried.
+
+## Allowed files
+
+Modify only files directly required for Stage B, likely including:
+
+- React application provider/root
+- Games query/context layer
+- Games Page
+- Game Card
+- Game Detail compatibility state
+- SmartSearch
+- Game frontend view types or adapters
+- focused PS-02B documentation
+
+Do not modify backend routes, OpenAPI, database schema or migrations.
+
+## Validation
+
+Use only scripts that exist in package.json.
+
+Required automated evidence:
+
+```bash
+pnpm --filter @workspace/playsyncer run typecheck
+pnpm --filter @workspace/playsyncer run build

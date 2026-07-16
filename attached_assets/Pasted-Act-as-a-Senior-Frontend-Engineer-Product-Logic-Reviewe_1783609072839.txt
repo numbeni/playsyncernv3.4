@@ -1,0 +1,207 @@
+Act as a Senior Frontend Engineer, Product Logic Reviewer, and Release-Safety Reviewer.
+
+We are working on PlaySyncer.
+
+Current status:
+- Phase 0.5 Foundation Alignment is done.
+- Games Management MVP is accepted.
+- Phase 2 Account Workspace MVP is accepted.
+- Account cards, account details, account identifiers, account form validation, and automatic capacity generation are good enough for now.
+
+Your task is now:
+
+Phase 3 — Capacity & Customer Assignment MVP
+
+Main goal:
+Make account capacities operational at frontend/mock level by allowing admins to add, edit, and remove customers/assignments under each capacity.
+
+Important limits:
+Do NOT redesign the whole app.
+Do NOT change the accepted visual direction.
+Do NOT add backend.
+Do NOT add database.
+Do NOT add authentication.
+Do NOT add WooCommerce.
+Do NOT add orders queue.
+Do NOT add push delivery.
+Do NOT add real permissions.
+Do NOT add localStorage.
+Keep everything frontend/mock-state only.
+
+Inspect first:
+- src/components/AccountCard.tsx
+- src/components/AccountDetailsModal.tsx
+- src/pages/GameDetailPage.tsx
+- src/hooks/useGames.tsx
+- src/domain/accounts/types.ts
+- src/domain/slots/types.ts
+- src/domain/permissions/permissions.ts
+- src/components/SmartSearch.tsx
+- src/mocks/playSyncerMockData.ts
+
+Required work:
+
+1. Add customer assignment operations for capacities
+
+Each capacity inside an account must support:
+- Add customer assignment
+- Edit customer assignment
+- Remove customer assignment
+
+Do this at frontend/mock-state level.
+
+Preferred mutations in useGames or the current state layer:
+- addCapacityCustomer(gameId, accountId, capacityId, customerData)
+- editCapacityCustomer(gameId, accountId, capacityId, customerId, customerData)
+- removeCapacityCustomer(gameId, accountId, capacityId, customerId)
+
+If the project still uses internal “slot” naming, internal names can remain slot-related for now, but all visible UI must use “ظرفیت”.
+
+2. Customer assignment fields
+
+Each customer assignment should include:
+- customer phone number
+- order ID
+- optional note
+- createdAt if easy and safe
+
+Suggested type fields:
+- id
+- phone
+- orderId
+- note
+- createdAt
+
+If existing customer type uses different field names like identifier/orderNumber, either safely extend it or map it cleanly without breaking existing UI.
+
+3. Validation
+
+Required:
+- phone number
+- order ID
+
+Validation rules:
+- Trim whitespace.
+- Phone must not be empty.
+- Order ID must not be empty.
+- Phone number should accept Iranian-style mobile numbers if possible:
+  - 09xxxxxxxxx
+  - or +989xxxxxxxxx
+But do not overbuild complex validation.
+Show clear Persian error messages.
+
+4. Multi-customer rule
+
+Do NOT enforce one customer per capacity.
+
+Each capacity can have multiple customer assignments.
+
+Example:
+Z3 PS5:
+- 09123456789 (#93103)
+- 09300000000 (#93104)
+
+5. Capacity UI actions
+
+Inside each capacity block in AccountCard, add clean actions:
+- افزودن مشتری
+- ویرایش مشتری
+- حذف مشتری
+
+Keep UI compact.
+Do not make the card too crowded.
+If needed, use small action buttons or a mini menu per customer row.
+
+6. Customer display
+
+For each assigned customer, show:
+- full phone number
+- order ID
+- optional note if available
+- copy action for phone number
+- copy action for order ID if easy
+
+Do NOT mask phone numbers.
+Phone numbers must be fully visible and copyable.
+
+7. Add/Edit customer modal or inline form
+
+Use a small modal/dialog or inline form for add/edit assignment.
+
+Fields:
+- Phone number
+- Order ID
+- Note
+
+Keep it simple.
+Do not create a large complex form.
+
+8. Update capacity counts
+
+Where capacity assignment count is shown, update it based on actual customers under capacities.
+
+For example:
+- account total assignments = sum of all capacity customers
+- game total assignments = sum of all account capacity customers if already calculated
+
+Do not spend too much time redesigning overview cards. Only keep counts technically correct where currently displayed.
+
+9. Search compatibility
+
+SmartSearch should be able to find:
+- customer phone number
+- order ID
+- note if added
+
+If SmartSearch already searches customer/capacity data, update it for the new fields.
+
+Search result type should remain clear:
+- مشتری / ظرفیت
+
+Clicking a customer/capacity result should navigate to the related Game Workspace and highlight/open the related account if this behavior already exists.
+
+Do not fully rebuild SmartSearch unless necessary.
+
+10. Permission scaffold
+
+Use existing can() checks where relevant.
+
+Add permission keys if missing:
+- capacity.assignCustomer
+- capacity.editCustomer
+- capacity.removeCustomer
+
+Do not implement real roles.
+Current can() may still return true.
+
+11. Scope control
+
+Do not implement:
+- Assign to Order
+- WooCommerce order linking
+- Push delivery
+- Real order queue
+- Backend persistence
+
+This phase is only manual customer assignment inside PlaySyncer frontend/mock state.
+
+12. Quality checks
+
+Run:
+- pnpm run typecheck
+- pnpm run build
+
+If lint exists:
+- pnpm run lint
+
+Fix TypeScript/build errors.
+
+Final response must include:
+- changed files
+- exact customer assignment features added
+- confirmation that each capacity can have multiple customers
+- confirmation that phone numbers are fully visible and copyable
+- confirmation that customer phone/order ID are searchable
+- confirmation that no backend/database/auth/WooCommerce/orders/push delivery/localStorage was added
+- test results
+- remaining risks or follow-up notes

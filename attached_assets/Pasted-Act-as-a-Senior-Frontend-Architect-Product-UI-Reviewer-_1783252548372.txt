@@ -1,0 +1,243 @@
+Act as a Senior Frontend Architect, Product UI Reviewer, and Release-Safety Reviewer.
+
+We are working on PlaySyncer.
+
+Current status:
+- Phase 0.5 Foundation Alignment is done.
+- Games Management MVP is accepted by manual UI review.
+- Games overview metrics are intentionally deferred and should not be redesigned now.
+- The Games page is good enough for now.
+- We are moving to the next phase.
+
+Your task is:
+
+Phase 2 — Account Workspace MVP
+
+Main goal:
+Make the Game Detail page operational at frontend/mock level by adding basic account management inside each game workspace.
+
+Important limits:
+Do NOT redesign the whole UI.
+Do NOT change the accepted visual direction.
+Do NOT modify the Games page unless required for type compatibility.
+Do NOT add backend.
+Do NOT add database.
+Do NOT add authentication.
+Do NOT add WooCommerce.
+Do NOT add orders queue.
+Do NOT add real permissions.
+Do NOT implement real customer assignment management.
+Do NOT implement assign-to-order.
+Do NOT implement push delivery.
+Do NOT add localStorage.
+Do NOT overbuild.
+
+Keep the current GameDetailPage and AccountCard visual style.
+
+Files to inspect first:
+- artifacts/playsyncer/src/pages/GameDetailPage.tsx
+- artifacts/playsyncer/src/components/AccountCard.tsx
+- artifacts/playsyncer/src/hooks/useGames.tsx
+- artifacts/playsyncer/src/domain/accounts/types.ts
+- artifacts/playsyncer/src/domain/slots/types.ts
+- artifacts/playsyncer/src/domain/games/types.ts
+- artifacts/playsyncer/src/domain/games/platform.ts
+- artifacts/playsyncer/src/domain/permissions/permissions.ts
+- artifacts/playsyncer/src/mocks/playSyncerMockData.ts
+
+Current known state:
+- Accounts are currently nested under Game objects.
+- AccountCard already displays basic account information and slots.
+- Account type currently has limited fields.
+- GameDetailPage already has an “افزودن اکانت” button, but it is not operational yet.
+
+Required work:
+
+1. Add frontend-only account mutations.
+
+Because accounts are currently nested under games, prefer adding account mutations to the existing useGames context instead of creating a separate global account store unless absolutely necessary.
+
+Add safe frontend/mock mutations:
+- addAccount(gameId, accountData)
+- editAccount(gameId, accountId, accountData)
+- toggleAccountStatus(gameId, accountId)
+- deleteAccount(gameId, accountId)
+
+Keep everything in memory only.
+No API.
+No localStorage.
+
+2. Expand Account domain type safely.
+
+Update Account type to support the required PlaySyncer fields:
+
+- id
+- number
+- email
+- password
+- emailPassword
+- onlineId
+- birthDate
+- familyManagementEmail
+- backupCodes
+- platform
+- status
+- slots
+
+Use clear names and keep backward compatibility with existing mock data by updating the mock data too.
+
+3. Add “افزودن اکانت” modal/drawer inside GameDetailPage.
+
+Required fields:
+- Email
+- PlayStation Password
+- Email Password
+- Online ID
+- Birth Date
+- Family Management Email
+- Backup Codes
+- Account Platform Type
+- Status: active / disabled
+
+Account number:
+- Must be auto-generated.
+- Admin must not enter account number manually.
+
+Validation:
+- Email is required.
+- PlayStation Password is required.
+- Account Platform Type is required.
+- Prevent duplicate account email inside the same game.
+- Trim whitespace.
+
+Backup codes:
+- Allow multiline text.
+- Convert entered lines into backupCodes array.
+- Also support separators like comma or pipe if easy and safe.
+
+4. Account platform rules.
+
+Game platform rules:
+- PS4_ONLY must not exist.
+- A game can only be:
+  - PS5_ONLY
+  - PS4_AND_PS5
+
+Account platform rules:
+- If game platform is PS5_ONLY, account platform must be PS5_ONLY.
+- If game platform is PS4_AND_PS5, account platform can be:
+  - PS5_ONLY
+  - PS4_AND_PS5
+
+5. Generate default empty slots for new accounts.
+
+If account platform is PS5_ONLY, generate:
+- Z2 PS5 #1
+- Z2 PS5 #2
+- Z3 PS5
+
+If account platform is PS4_AND_PS5, generate:
+- Z2 PS5 #1
+- Z2 PS5 #2
+- Z2 PS4 #1
+- Z3 PS5
+
+Important:
+- Do NOT implement customer assignment management yet.
+- Do NOT implement assign-to-order yet.
+- Slots should exist only so AccountCard can display the correct operational structure.
+
+6. Add Edit Account action.
+
+Each AccountCard should expose an edit action without breaking the accordion behavior.
+
+Editing should allow:
+- Email
+- PlayStation Password
+- Email Password
+- Online ID
+- Birth Date
+- Family Management Email
+- Backup Codes
+- Account Platform Type
+- Status
+
+Platform change rules:
+- If changing from PS5_ONLY to PS4_AND_PS5, add missing Z2 PS4 #1.
+- If changing from PS4_AND_PS5 to PS5_ONLY, remove Z2 PS4 #1 after confirmation or clear warning.
+- Keep this simple and mock-only.
+
+7. Add View Account Details action.
+
+Each AccountCard should have:
+- “مشاهده اطلاعات اکانت”
+
+Details modal/drawer should show English labels similar to:
+
+Email:
+Password:
+Email Password:
+Online ID:
+Birth Date:
+Family Management:
+Backup Codes:
+
+Sensitive fields may be visible inside the details modal.
+Do not expose all sensitive details in the collapsed card.
+
+8. Add Disable/Enable Account.
+
+Disable/Enable should only change account status.
+It must not delete account data, slots, or backup codes.
+
+9. Add Delete Account with confirmation.
+
+Delete account should remove:
+- account
+- nested slots
+- nested mock customers/assignments if they exist inside that account
+
+Show a clear Persian confirmation warning.
+
+10. Permission scaffold.
+
+Use existing can() checks where relevant:
+- account.create
+- account.edit.email
+- account.edit.password
+- account.edit.backupCodes
+- account.view.details
+- account.disable
+- account.delete
+
+If missing permission keys are needed, add them safely.
+Do not implement real role logic yet.
+The current can() can still return true.
+
+11. Search compatibility.
+
+After account add/edit/delete:
+- SmartSearch should not crash.
+- If SmartSearch still reads old mock data and does not reflect in-memory account changes, do not fully rebuild it in this phase.
+- Report it as a follow-up risk.
+
+12. Quality checks.
+
+Run from the workspace root if needed:
+- pnpm run typecheck
+- pnpm run build
+
+Or from artifacts/playsyncer if working only there:
+- pnpm run typecheck
+- pnpm run build
+
+Fix all TypeScript/build errors.
+
+Final response must include:
+- changed files
+- exact account features added
+- confirmation that the Games page was not redesigned
+- confirmation that UI visual direction was preserved
+- confirmation that no backend/database/auth/WooCommerce/orders/push delivery/localStorage was added
+- test results
+- remaining risks or follow-up notes

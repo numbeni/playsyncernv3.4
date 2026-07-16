@@ -1,0 +1,210 @@
+قبل از پاسخ دادن عجله نکن. اول مسئله، سورس، فایل‌ها، وابستگی‌ها، ریسک‌ها و اثرات جانبی را عمیق تحلیل کن. اگر شواهد کافی از سورس، لاگ، diff یا تست نداری، ادعای قطعی نکن. خروجی سطحی، حدسی، تبلیغاتی یا سریع نده. هر تغییر باید کوچک، قابل تست، قابل rollback و سازگار با TypeScript / Node / Express / PostgreSQL / Drizzle standards باشد.
+
+Approved for Schema Patch Phase only.
+
+The inspection report is accepted.
+
+You may now implement Phase 4/5 with this limited scope:
+
+Allowed:
+1. Add Drizzle enums.
+2. Add core schema tables:
+   - admins
+   - games
+   - accounts
+   - account_backup_codes
+   - account_capacities
+   - orders
+   - capacity_customers
+   - audit_logs
+
+3. Add safe indexes and constraints.
+4. Add small pure helper files:
+   - normalizeOrderCode
+   - normalizeAccountNumberPrefix
+   - buildDisplayNumber
+   - buildCapacityDefinitions
+
+Preferred file structure:
+- lib/db/src/schema/enums.ts
+- lib/db/src/schema/admins.ts
+- lib/db/src/schema/games.ts
+- lib/db/src/schema/accounts.ts
+- lib/db/src/schema/account-backup-codes.ts
+- lib/db/src/schema/account-capacities.ts
+- lib/db/src/schema/orders.ts
+- lib/db/src/schema/capacity-customers.ts
+- lib/db/src/schema/audit-logs.ts
+- lib/db/src/schema/index.ts
+- lib/db/src/helpers/order-code.ts
+- lib/db/src/helpers/account-number.ts
+- lib/db/src/helpers/capacity-definitions.ts
+
+Strict limits:
+- Do NOT add API routes.
+- Do NOT update frontend.
+- Do NOT update OpenAPI/codegen.
+- Do NOT implement WooCommerce.
+- Do NOT implement delivery/push flow.
+- Do NOT implement payout.
+- Do NOT implement issue reports.
+- Do NOT implement Activity Log UI.
+- Do NOT implement full auth/permissions.
+- Do NOT generate migrations.
+- Do NOT run drizzle push.
+- Do NOT run push-force.
+- Do NOT add unrelated dependencies.
+
+Commander decisions that must be followed:
+
+1. Platform enum values are final:
+- PS5_ONLY
+- PS4_AND_PS5
+- PS4_ONLY
+
+2. Capacity generation rules are final:
+
+PS5_ONLY:
+- Z2 PS5 #1
+- Z2 PS5 #2
+- Z3 PS5
+
+PS4_AND_PS5:
+- Z2 PS5 #1
+- Z2 PS5 #2
+- Z2 PS4
+- Z3 PS5
+
+PS4_ONLY:
+- Z2 PS4
+
+Never display or store displayLabel as:
+- Z2 PS4 #1
+- Z2 PS4 #0
+- Z3 PS5 #0
+
+Correct labels:
+- Z2 PS5 #1
+- Z2 PS5 #2
+- Z2 PS4
+- Z3 PS5
+
+3. account_capacities.instanceNo must be NOT NULL.
+
+Use:
+- Z2 PS5 #1 → capacityKind=Z2_PS5, instanceNo=1
+- Z2 PS5 #2 → capacityKind=Z2_PS5, instanceNo=2
+- Z2 PS4 → capacityKind=Z2_PS4, instanceNo=0
+- Z3 PS5 → capacityKind=Z3_PS5, instanceNo=0
+
+This avoids PostgreSQL nullable unique issues.
+
+4. Capacities must be persistent.
+Create account_capacities table.
+Do not rely on runtime generation.
+
+5. Orders must be independent.
+Create orders table.
+capacity_customers must reference orders.
+
+6. Order code normalization is final:
+Inputs:
+- 200
+- ord-200
+- ORD 200
+- #200
+- ORD200
+- ORD-000200
+
+All must normalize to:
+ORD-200
+
+7. Account identifiers:
+- account.id = internal uuid
+- accountCode = ACC-000001, globally unique, backend-generated
+- displayNumber = #GTA6-001
+- store accountNumberPrefix, accountNumberSeq, and displayNumber separately
+
+8. accounts.emailNormalized uniqueness:
+Required behavior:
+unique emailNormalized where deletedAt is null.
+
+If Drizzle/PostgreSQL partial unique index syntax is safe in this project, implement it.
+If not, do NOT fake it with a normal unique constraint. Report the limitation clearly and add a TODO/risk note.
+
+9. Sensitive fields:
+Use encrypted column naming only:
+- playstationPasswordEncrypted
+- emailPasswordEncrypted
+- familyManagementEmailEncrypted
+- customerPhoneEncrypted
+- codeEncrypted
+
+Do not claim actual encryption is implemented.
+Do not store sensitive fields with plain names like password or customerPhone as the final sensitive value.
+Blind index columns may be nullable/indexed if safe.
+
+10. Changing game platform must not regenerate existing capacities.
+Do not implement platform-change business logic in this phase.
+
+Required enums:
+- gamePlatform: PS5_ONLY, PS4_AND_PS5, PS4_ONLY
+- gameStatus: active, inactive
+- accountStatus: active, disabled
+- capacityKind: Z2_PS5, Z2_PS4, Z3_PS5
+- capacityPlatform: PS4, PS5
+- orderSource: manual, woocommerce, api
+- orderStatus: pending_assignment, assigned, delivered, failed, cancelled
+- capacityCustomerStatus: active, removed, cancelled
+- adminStatus: active, inactive
+
+Helper requirements:
+
+1. normalizeOrderCode(input)
+Rules:
+- trim
+- uppercase
+- remove leading #
+- accept ORD200, ORD-200, ORD 200, 200
+- remove leading zeros from numeric part
+- output ORD-<number>
+- invalid if no numeric part
+
+2. normalizeAccountNumberPrefix(input, fallback)
+Rules:
+- trim
+- uppercase
+- spaces to hyphen
+- remove unsafe characters
+- if empty use fallback
+- if still empty use ACC or GAME
+- must not use technical gameId for display prefix
+
+3. buildDisplayNumber(prefix, seq)
+Example:
+GTA6 + 1 → #GTA6-001
+
+4. buildCapacityDefinitions(platform)
+Return persisted capacity definitions based on the final platform rules.
+
+Validation after patch:
+Run only safe commands:
+- pnpm run typecheck
+- pnpm run build
+
+Do NOT run:
+- drizzle push
+- push-force
+- migration generation
+- DB-mutating commands
+
+Final response must include:
+1. Files changed
+2. Tables/enums added
+3. Indexes/constraints added
+4. Helper functions added
+5. Commands run and exact results
+6. Confirmation that no migrations were generated
+7. Confirmation that no drizzle push / push-force was run
+8. Confirmation that no frontend/OpenAPI/API route/WooCommerce/auth/delivery changes were made
+9. Remaining risks, especially partial unique index if not fully implemented

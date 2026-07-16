@@ -1,0 +1,47 @@
+Act as a Senior Front-End Engineer and UI/UX Debugging Specialist.
+
+Fix only the following two UI bugs in the PlaySyncer frontend. Do not redesign the app and do not touch unrelated logic.
+
+## Bug 1 — Add/Edit Game Modal layout issue
+
+The Add Game and Edit Game modal/dialog is not displayed correctly on desktop and mobile.
+
+Required fix:
+- The modal overlay must cover the full viewport with proper z-index.
+- On desktop, the dialog should be cleanly centered in the viewport.
+- On mobile, the dialog must fit inside the viewport with safe spacing.
+- The modal content must use a safe max-height, such as `calc(100dvh - 32px)` or equivalent.
+- Long content must scroll inside the modal, not outside the viewport.
+- Submit/cancel buttons must always remain reachable.
+- Inputs, platform buttons, and status buttons must not overflow on small screens.
+- No horizontal scroll should be introduced.
+- The fix must apply to both Add Game and Edit Game modes.
+
+## Bug 2 — Game card image overlay/shadow issue
+
+The bottom part of the game card image is missing the intended dark gradient/shadow overlay.
+
+Required fix:
+- Inspect the GameCard image/cover section.
+- Ensure the image wrapper is `relative` and `overflow-hidden`.
+- Ensure the image fills the full wrapper area using correct width/height and `object-cover`.
+- Ensure the gradient/shadow overlay covers the entire image area using `absolute inset-0`.
+- Ensure the overlay reaches the bottom edge with no unstyled strip/gap.
+- Keep title, status badge, and platform badge above the overlay.
+- Preserve the current card design; only fix the broken layering/overlay.
+
+## Constraints
+
+- Do not add new features.
+- Do not change backend code.
+- Do not change auth, permissions, database, search, account logic, or routing unless strictly required for these UI bugs.
+- Do not perform a full UI redesign.
+- Keep changes minimal, targeted, and easy to review.
+
+## Validation
+
+After the fix:
+- Run `npm run build`.
+- Report changed files.
+- Report what was fixed.
+- Report build result and any remaining risks.

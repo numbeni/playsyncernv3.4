@@ -1,0 +1,166 @@
+Act as a Senior Frontend Engineer, Responsive UI/UX Reviewer, and Release-Safety Reviewer.
+
+We are working on PlaySyncer.
+
+Current task:
+Desktop header/sidebar polish + mobile Account Workspace optimization.
+
+Important limits:
+Do NOT redesign the whole app.
+Do NOT change the accepted visual identity.
+Do NOT add backend.
+Do NOT add database.
+Do NOT add auth.
+Do NOT add WooCommerce.
+Do NOT add orders.
+Do NOT add push delivery.
+Do NOT add localStorage.
+Only apply focused frontend/UI fixes.
+
+Inspect first:
+- src/App.tsx
+- src/index.css
+- src/components/AppSidebar.tsx
+- src/components/ThemeToggle.tsx
+- src/pages/GamesPage.tsx
+- src/pages/GameDetailPage.tsx
+- src/components/AccountCard.tsx
+- src/components/AccountDetailsModal.tsx
+- src/components/SmartSearch.tsx
+
+Required changes:
+
+1. Sidebar open/close button position
+
+The current open/close sidebar button placement is not ideal.
+
+Move the sidebar toggle button to a clean and consistent position near the top of the sidebar/header area.
+
+Requirements:
+- It should look like a normal square icon button.
+- It should not overlap content.
+- It should not waste horizontal space.
+- On desktop, place it logically near the top of the sidebar.
+- On mobile, keep the hamburger/sidebar toggle easy to reach and visually clean.
+- Do not break RTL layout.
+
+2. Add desktop-only status/header bar
+
+Add a clean desktop status/header bar for the app.
+
+Desktop only:
+- Show user/profile summary there.
+- Move Light/Dark mode switch there.
+- Optional: keep small system/status items there if already available.
+- The header should sit above page content and feel like part of the dashboard shell.
+
+Mobile:
+- Do not force the full desktop header into mobile.
+- Keep mobile header compact and usable.
+- Avoid making mobile viewport shorter unnecessarily.
+
+3. Sidebar cleanup after header
+
+If profile info or theme toggle currently exists inside the sidebar and is moved to the desktop header, avoid duplicate UI on desktop.
+
+Keep sidebar focused on navigation:
+- بازی‌ها
+- سفارشات
+- گزارش مشکلات
+- کاربران و دسترسی
+- تنظیمات
+
+4. Mobile AccountCard action optimization
+
+In mobile view, the action icons currently consume too much space and cause account numbers to be clipped.
+
+For mobile only:
+- Move edit/delete/disable actions into a compact three-dots menu or similar action menu.
+- Keep only essential always-visible controls in the card header.
+- The menu should open actions clearly:
+  - ویرایش
+  - غیرفعال‌سازی / فعال‌سازی
+  - حذف
+  - مشاهده اطلاعات اکانت if appropriate
+- Desktop can keep the current inline actions if it looks good.
+
+5. Make account identifiers visible on mobile
+
+Both identifiers must be visible and readable on mobile:
+
+- Global Account ID, example: ACC-000128
+- Per-game number, example: #GTA6-001
+
+Requirements:
+- Do not truncate them.
+- Do not hide them behind ellipsis.
+- Use a compact two-line or stacked layout if needed.
+- The user must clearly understand both values.
+- The layout must still look clean in narrow screens like iPhone SE width.
+
+6. Click-to-copy account identifiers
+
+Both account identifiers must be copyable by clicking/tapping directly on them:
+
+- Account ID / accountCode
+- Per-game account number
+
+Requirements:
+- On click/tap, copy the value to clipboard.
+- Show a small visual feedback/toast if the project already has a toast system.
+- If no toast system exists, add a simple lightweight feedback without overbuilding.
+- Do not require an extra copy icon if the label itself can be clickable, but cursor/UX should make it clear.
+
+7. Fix mobile per-game account number display
+
+The per-game number like #GTA6-001 currently does not fit properly on mobile.
+
+Fix the mobile AccountCard header layout so:
+- #GTA6-001 is fully visible
+- ACC-000xxx is fully visible
+- status badge still fits
+- platform badge still fits if shown
+- actions menu does not push identifiers out of view
+
+8. Improve mobile AccountCard UX generally
+
+Without redesigning the whole card:
+- Reduce header clutter
+- Improve spacing
+- Avoid cramped icons
+- Keep collapsed/expanded behavior smooth
+- Make primary account information readable
+- Keep backup codes readable and copyable
+- Keep capacity section readable
+
+9. Desktop should remain clean
+
+Do not optimize mobile by damaging desktop.
+
+On desktop:
+- AccountCard should still look professional
+- Actions can remain inline if they fit
+- Account identifiers should also be clear and copyable
+- Header/status bar should improve the dashboard feel
+
+10. Quality checks
+
+Run:
+- pnpm run typecheck
+- pnpm run build
+
+If lint exists:
+- pnpm run lint
+
+Fix TypeScript/build errors.
+
+Final response must include:
+- changed files
+- exact UI fixes made
+- confirmation that desktop status/header bar was added
+- confirmation that sidebar toggle position was improved
+- confirmation that mobile AccountCard actions moved into a compact menu
+- confirmation that both account identifiers are fully visible and copyable
+- confirmation that no backend/database/auth/WooCommerce/orders/push delivery/localStorage was added
+- test results
+- remaining risks or follow-up notes

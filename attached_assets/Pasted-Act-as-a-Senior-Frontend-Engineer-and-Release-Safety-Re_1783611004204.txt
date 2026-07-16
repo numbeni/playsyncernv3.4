@@ -1,0 +1,129 @@
+Act as a Senior Frontend Engineer and Release-Safety Reviewer.
+
+We are working on PlaySyncer.
+
+Current task:
+Normalize customer assignment Order ID format.
+
+Current issue:
+When adding a customer to a capacity, the admin can enter raw order values like:
+200
+
+But other order values may look like:
+ORD-14
+
+This creates inconsistent UI/search behavior.
+
+Required behavior:
+All order IDs must be normalized to a consistent display/storage format:
+
+ORD-<number>
+
+Examples:
+- 200 → ORD-200
+- ORD-200 → ORD-200
+- ord-200 → ORD-200
+- ord 200 → ORD-200
+- #200 → ORD-200
+
+Important limits:
+Do NOT redesign the app.
+Do NOT add backend.
+Do NOT add database.
+Do NOT add authentication.
+Do NOT add WooCommerce.
+Do NOT add orders queue.
+Do NOT add push delivery.
+Do NOT add localStorage.
+Keep all changes frontend/mock-state only.
+
+Inspect first:
+- src/components/CapacityCustomerModal.tsx
+- src/components/AccountCard.tsx
+- src/domain/slots/types.ts
+- src/hooks/useGames.tsx
+- src/components/SmartSearch.tsx
+- src/mocks/playSyncerMockData.ts
+
+Required changes:
+
+1. Add an order ID normalization helper
+
+Create or reuse a small helper function such as:
+
+normalizeOrderId(input: string): string
+
+Rules:
+- Trim whitespace.
+- Accept raw numbers.
+- Accept lowercase/uppercase ORD prefix.
+- Remove spaces between ORD and number.
+- Remove optional #.
+- Output must always be uppercase:
+  ORD-200
+
+2. Validate order ID
+
+Order ID is required.
+After normalization, it must contain a numeric part.
+
+Invalid examples:
+- empty
+- ORD-
+- abc
+- random text
+
+Show a clear Persian validation message if invalid.
+
+3. Normalize before saving
+
+When adding or editing a customer assignment:
+- normalize orderId before saving it to state
+- never save raw "200" if it should be "ORD-200"
+
+4. Update existing mock data if needed
+
+If mock customer assignments use raw order IDs like:
+200
+
+Update them to:
+ORD-200
+
+5. AccountCard display
+
+Customer order IDs should always display in normalized format:
+
+ORD-200
+
+Keep them copyable if copy action exists.
+
+6. SmartSearch compatibility
+
+SmartSearch should find the same assignment by:
+- 200
+- ORD-200
+- ord-200
+
+Do not rebuild SmartSearch completely.
+Only update matching logic if needed.
+
+7. Quality checks
+
+Run:
+- pnpm run typecheck
+- pnpm run build
+
+If lint exists:
+- pnpm run lint
+
+Fix TypeScript/build errors.
+
+Final response must include:
+- changed files
+- exact normalization rules added
+- confirmation that raw numeric input like 200 is saved/displayed as ORD-200
+- confirmation that ORD-200 / ord-200 are accepted
+- confirmation that order IDs remain searchable by both numeric and ORD formats
+- confirmation that no backend/database/auth/WooCommerce/orders queue/push delivery/localStorage was added
+- test results
+- remaining risks or follow-up notes

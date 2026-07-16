@@ -1,0 +1,2322 @@
+diff --git a/artifacts/api-server/package.json b/artifacts/api-server/package.json
+index e83fe8d..068d95b 100644
+--- a/artifacts/api-server/package.json
++++ b/artifacts/api-server/package.json
+@@ -7,7 +7,8 @@
+     "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
+     "build": "node ./build.mjs",
+     "start": "node --enable-source-maps ./dist/index.mjs",
+-    "typecheck": "tsc -p tsconfig.json --noEmit"
++    "typecheck": "tsc -p tsconfig.json --noEmit",
++    "test": "node --test src/lib/*.test.ts"
+   },
+   "dependencies": {
+     "@workspace/api-zod": "workspace:*",
+diff --git a/artifacts/api-server/src/app.ts b/artifacts/api-server/src/app.ts
+index f32f71e..996621d 100644
+--- a/artifacts/api-server/src/app.ts
++++ b/artifacts/api-server/src/app.ts
+@@ -3,9 +3,15 @@ import cors from "cors";
+ import pinoHttp from "pino-http";
+ import router from "./routes";
+ import { logger } from "./lib/logger";
++import { errorHandler, notFoundHandler } from "./middlewares/error-handler";
+ 
+ const app: Express = express();
+ 
++// Explicit JSON body-size limit — oversized or malformed bodies are turned
++// into controlled 413/400 responses by the centralized error handler below,
++// instead of crashing the process or leaking a raw parser stack trace.
++const JSON_BODY_LIMIT = "1mb";
++
+ app.use(
+   pinoHttp({
+     logger,
+@@ -26,9 +32,13 @@ app.use(
+   }),
+ );
+ app.use(cors());
+-app.use(express.json());
+-app.use(express.urlencoded({ extended: true }));
++app.use(express.json({ limit: JSON_BODY_LIMIT }));
++app.use(express.urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
+ 
+ app.use("/api", router);
+ 
++// Must be mounted last: 404 for unmatched routes, then the centralized error handler.
++app.use(notFoundHandler);
++app.use(errorHandler);
++
+ export default app;
+diff --git a/artifacts/api-server/src/lib/crypto.test.ts b/artifacts/api-server/src/lib/crypto.test.ts
+new file mode 100644
+index 0000000..81cb695
+--- /dev/null
++++ b/artifacts/api-server/src/lib/crypto.test.ts
+@@ -0,0 +1,69 @@
++import { test, describe } from "node:test";
++import assert from "node:assert/strict";
++import {
++  encrypt,
++  decrypt,
++  hashForLookup,
++  generateKey,
++  CryptoKeyError,
++  DecryptionError,
++} from "./crypto.ts";
++
++describe("crypto utilities", () => {
++  test("encrypt/decrypt round-trips plaintext", () => {
++    const key = generateKey();
++    const plaintext = "player@example.com";
++    const ciphertext = encrypt(plaintext, key);
++
++    assert.notEqual(ciphertext, plaintext);
++    assert.equal(decrypt(ciphertext, key), plaintext);
++  });
++
++  test("encrypt produces different ciphertext for the same plaintext (random IV)", () => {
++    const key = generateKey();
++    const a = encrypt("same-value", key);
++    const b = encrypt("same-value", key);
++    assert.notEqual(a, b);
++  });
++
++  test("decrypt fails with the wrong key", () => {
++    const key = generateKey();
++    const wrongKey = generateKey();
++    const ciphertext = encrypt("secret", key);
++    assert.throws(() => decrypt(ciphertext, wrongKey), DecryptionError);
++  });
++
++  test("decrypt fails on tampered ciphertext (auth tag check)", () => {
++    const key = generateKey();
++    const ciphertext = encrypt("secret", key);
++    const raw = Buffer.from(ciphertext, "base64");
++    raw[raw.length - 1] = (raw[raw.length - 1] ?? 0) ^ 0xff; // flip last byte
++    const tampered = raw.toString("base64");
++    assert.throws(() => decrypt(tampered, key), DecryptionError);
++  });
++
++  test("rejects keys that are not exactly 32 bytes", () => {
++    const shortKey = Buffer.alloc(16);
++    assert.throws(() => encrypt("x", shortKey), CryptoKeyError);
++  });
++
++  test("hashForLookup is deterministic for the same key and input", () => {
++    const key = generateKey();
++    const a = hashForLookup("PlayerOne", key);
++    const b = hashForLookup("PlayerOne", key);
++    assert.equal(a, b);
++  });
++
++  test("hashForLookup differs for different inputs or keys", () => {
++    const key = generateKey();
++    const otherKey = generateKey();
++    assert.notEqual(hashForLookup("PlayerOne", key), hashForLookup("PlayerTwo", key));
++    assert.notEqual(hashForLookup("PlayerOne", key), hashForLookup("PlayerOne", otherKey));
++  });
++
++  test("hashForLookup output looks like a hex sha256 digest", () => {
++    const key = generateKey();
++    const digest = hashForLookup("value", key);
++    assert.match(digest, /^[0-9a-f]{64}$/);
++  });
++});
+diff --git a/artifacts/api-server/src/lib/crypto.ts b/artifacts/api-server/src/lib/crypto.ts
+new file mode 100644
+index 0000000..1882a14
+--- /dev/null
++++ b/artifacts/api-server/src/lib/crypto.ts
+@@ -0,0 +1,103 @@
++/**
++ * Reusable cryptography utilities built on Node's native `crypto` module.
++ *
++ * PS-01 scope note: these utilities are foundation-only. They are NOT wired
++ * into Accounts, Backup Codes, or any existing database column yet — that
++ * wiring is a separate, explicitly-authorized phase per docs/CURRENT_PHASE.md.
++ */
++import {
++  createCipheriv,
++  createDecipheriv,
++  createHmac,
++  randomBytes,
++} from "node:crypto";
++
++const ALGORITHM = "aes-256-gcm";
++const KEY_LENGTH_BYTES = 32; // AES-256
++const IV_LENGTH_BYTES = 12; // recommended IV length for GCM
++const AUTH_TAG_LENGTH_BYTES = 16;
++
++export class CryptoKeyError extends Error {}
++export class DecryptionError extends Error {}
++
++function assertKey(key: Buffer): void {
++  if (key.length !== KEY_LENGTH_BYTES) {
++    throw new CryptoKeyError(
++      `Encryption key must be exactly ${KEY_LENGTH_BYTES} bytes, got ${key.length}`,
++    );
++  }
++}
++
++/** Generates a fresh random 32-byte key, suitable for AES-256-GCM. */
++export function generateKey(): Buffer {
++  return randomBytes(KEY_LENGTH_BYTES);
++}
++
++/**
++ * Authenticated-encrypts `plaintext` with AES-256-GCM.
++ * Returns a single base64 string containing iv + authTag + ciphertext,
++ * so it can be stored as one opaque value.
++ */
++export function encrypt(plaintext: string, key: Buffer): string {
++  assertKey(key);
++  const iv = randomBytes(IV_LENGTH_BYTES);
++  const cipher = createCipheriv(ALGORITHM, key, iv);
++  const ciphertext = Buffer.concat([
++    cipher.update(plaintext, "utf8"),
++    cipher.final(),
++  ]);
++  const authTag = cipher.getAuthTag();
++
++  return Buffer.concat([iv, authTag, ciphertext]).toString("base64");
++}
++
++/**
++ * Decrypts a value produced by `encrypt`. Throws `DecryptionError` if the
++ * payload is malformed or has been tampered with (auth tag mismatch).
++ */
++export function decrypt(payload: string, key: Buffer): string {
++  assertKey(key);
++
++  let raw: Buffer;
++  try {
++    raw = Buffer.from(payload, "base64");
++  } catch {
++    throw new DecryptionError("Payload is not valid base64");
++  }
++
++  if (raw.length < IV_LENGTH_BYTES + AUTH_TAG_LENGTH_BYTES) {
++    throw new DecryptionError("Payload is too short to be a valid ciphertext");
++  }
++
++  const iv = raw.subarray(0, IV_LENGTH_BYTES);
++  const authTag = raw.subarray(
++    IV_LENGTH_BYTES,
++    IV_LENGTH_BYTES + AUTH_TAG_LENGTH_BYTES,
++  );
++  const ciphertext = raw.subarray(IV_LENGTH_BYTES + AUTH_TAG_LENGTH_BYTES);
++
++  try {
++    const decipher = createDecipheriv(ALGORITHM, key, iv);
++    decipher.setAuthTag(authTag);
++    const plaintext = Buffer.concat([
++      decipher.update(ciphertext),
++      decipher.final(),
++    ]);
++    return plaintext.toString("utf8");
++  } catch (err) {
++    throw new DecryptionError(
++      `Failed to decrypt payload (tampered or wrong key): ${(err as Error).message}`,
++    );
++  }
++}
++
++/**
++ * Deterministic keyed lookup hash (HMAC-SHA256), hex-encoded.
++ * Same (value, key) always produces the same hash — usable for exact-match
++ * lookups (e.g. blind indexes) without storing plaintext, and without the
++ * randomness of `encrypt`.
++ */
++export function hashForLookup(value: string, key: Buffer): string {
++  assertKey(key);
++  return createHmac("sha256", key).update(value, "utf8").digest("hex");
++}
+diff --git a/artifacts/api-server/src/lib/validate-uuid.ts b/artifacts/api-server/src/lib/validate-uuid.ts
+new file mode 100644
+index 0000000..fb11e57
+--- /dev/null
++++ b/artifacts/api-server/src/lib/validate-uuid.ts
+@@ -0,0 +1,27 @@
++import type { NextFunction, Request, Response } from "express";
++import { HttpError } from "../middlewares/error-handler";
++
++const UUID_RE =
++  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
++
++/** Reusable check — true if `value` is a syntactically valid UUID (any version). */
++export function isUuid(value: string): boolean {
++  return UUID_RE.test(value);
++}
++
++/**
++ * Express `router.param()` handler factory: validates that a route param is a
++ * well-formed UUID before any handler runs, so malformed values fail fast with
++ * HTTP 400 instead of reaching the database as an invalid-input query error.
++ *
++ * Usage: `router.param("id", requireUuidParam("id"));`
++ */
++export function requireUuidParam(paramName: string) {
++  return (req: Request, _res: Response, next: NextFunction, value: string): void => {
++    if (!isUuid(value)) {
++      next(new HttpError(400, `Invalid ${paramName}: expected a UUID`));
++      return;
++    }
++    next();
++  };
++}
+diff --git a/artifacts/api-server/src/middlewares/error-handler.ts b/artifacts/api-server/src/middlewares/error-handler.ts
+new file mode 100644
+index 0000000..5b289ac
+--- /dev/null
++++ b/artifacts/api-server/src/middlewares/error-handler.ts
+@@ -0,0 +1,81 @@
++import type { NextFunction, Request, Response } from "express";
++import { ZodError } from "zod";
++import { logger } from "../lib/logger";
++
++/**
++ * Thrown by route/middleware code to produce a specific HTTP status with a
++ * client-safe message. Anything else (unexpected errors) is treated as a
++ * 500 and its details are never sent to the client.
++ */
++export class HttpError extends Error {
++  readonly statusCode: number;
++  readonly detail: unknown;
++
++  constructor(statusCode: number, message: string, detail?: unknown) {
++    super(message);
++    this.name = "HttpError";
++    this.statusCode = statusCode;
++    this.detail = detail;
++  }
++}
++
++/** 404 handler for routes that don't match anything — must be mounted last. */
++export function notFoundHandler(req: Request, res: Response): void {
++  res.status(404).json({ error: "Not found" });
++}
++
++/**
++ * Centralized error handler — must be mounted last, after all routes.
++ * Express recognizes this as an error middleware because it takes 4 args.
++ */
++export function errorHandler(
++  err: unknown,
++  req: Request,
++  res: Response,
++  _next: NextFunction,
++): void {
++  if (res.headersSent) {
++    // A response already started streaming; nothing safe to do but log.
++    logger.error(err, "Error occurred after response headers were sent");
++    return;
++  }
++
++  if (err instanceof HttpError) {
++    res.status(err.statusCode).json({
++      error: err.message,
++      ...(err.detail !== undefined ? { detail: err.detail } : {}),
++    });
++    return;
++  }
++
++  if (err instanceof ZodError) {
++    res.status(400).json({ error: "Validation failed", issues: err.issues });
++    return;
++  }
++
++  // express.json() throws a SyntaxError (with a body-parser `type`) on malformed JSON.
++  if (
++    err instanceof SyntaxError &&
++    typeof err === "object" &&
++    err !== null &&
++    "type" in err &&
++    (err as { type?: unknown }).type === "entity.parse.failed"
++  ) {
++    res.status(400).json({ error: "Malformed JSON body" });
++    return;
++  }
++
++  // body-parser reports oversized bodies via this `type`.
++  if (
++    typeof err === "object" &&
++    err !== null &&
++    "type" in err &&
++    (err as { type?: unknown }).type === "entity.too.large"
++  ) {
++    res.status(413).json({ error: "Request body too large" });
++    return;
++  }
++
++  logger.error(err, "Unhandled error");
++  res.status(500).json({ error: "Internal server error" });
++}
+diff --git a/artifacts/api-server/src/routes/accounts.ts b/artifacts/api-server/src/routes/accounts.ts
+index eb6cc1f..34dec63 100644
+--- a/artifacts/api-server/src/routes/accounts.ts
++++ b/artifacts/api-server/src/routes/accounts.ts
+@@ -17,9 +17,14 @@ import { z } from "zod";
+ import { logger } from "../lib/logger";
+ import { p } from "../lib/req-param";
+ import { toSafeAccount } from "../lib/dto";
++import { requireUuidParam } from "../lib/validate-uuid";
+ 
+ const router: IRouter = Router();
+ 
++// Malformed UUID route params fail fast with HTTP 400 instead of reaching the DB.
++router.param("gameId", requireUuidParam("gameId"));
++router.param("id", requireUuidParam("id"));
++
+ // ── Validation ──────────────────────────────────────────────────────────────
+ 
+ const CreateAccountBody = z.object({
+diff --git a/artifacts/api-server/src/routes/capacity-customers.ts b/artifacts/api-server/src/routes/capacity-customers.ts
+index 863c5d2..4b2b5ed 100644
+--- a/artifacts/api-server/src/routes/capacity-customers.ts
++++ b/artifacts/api-server/src/routes/capacity-customers.ts
+@@ -9,9 +9,14 @@ import { eq, and, isNull } from "drizzle-orm";
+ import { z } from "zod";
+ import { logger } from "../lib/logger";
+ import { p } from "../lib/req-param";
++import { requireUuidParam } from "../lib/validate-uuid";
+ 
+ const router: IRouter = Router();
+ 
++// Malformed UUID route params fail fast with HTTP 400 instead of reaching the DB.
++router.param("accountId", requireUuidParam("accountId"));
++router.param("capacityId", requireUuidParam("capacityId"));
++
+ // ── Validation ──────────────────────────────────────────────────────────────
+ 
+ const AssignCustomerBody = z.object({
+diff --git a/artifacts/api-server/src/routes/games.ts b/artifacts/api-server/src/routes/games.ts
+index 43491df..43b84d6 100644
+--- a/artifacts/api-server/src/routes/games.ts
++++ b/artifacts/api-server/src/routes/games.ts
+@@ -4,9 +4,13 @@ import { eq, isNull, and, desc, count } from "drizzle-orm";
+ import { z } from "zod";
+ import { logger } from "../lib/logger";
+ import { p } from "../lib/req-param";
++import { requireUuidParam } from "../lib/validate-uuid";
+ 
+ const router: IRouter = Router();
+ 
++// Malformed UUID route params fail fast with HTTP 400 instead of reaching the DB.
++router.param("id", requireUuidParam("id"));
++
+ // ── Validation ──────────────────────────────────────────────────────────────
+ 
+ const CreateGameBody = z.object({
+diff --git a/artifacts/api-server/src/routes/index.ts b/artifacts/api-server/src/routes/index.ts
+index 49e077c..3d06bf2 100644
+--- a/artifacts/api-server/src/routes/index.ts
++++ b/artifacts/api-server/src/routes/index.ts
+@@ -1,5 +1,6 @@
+ import { Router, type IRouter } from "express";
+ import healthRouter from "./health";
++import readyzRouter from "./readyz";
+ import gamesRouter from "./games";
+ import accountsRouter from "./accounts";
+ import ordersRouter from "./orders";
+@@ -8,6 +9,7 @@ import capacityCustomersRouter from "./capacity-customers";
+ const router: IRouter = Router();
+ 
+ router.use(healthRouter);
++router.use(readyzRouter);
+ router.use(gamesRouter);
+ router.use(accountsRouter);
+ router.use(ordersRouter);
+diff --git a/artifacts/api-server/src/routes/orders.ts b/artifacts/api-server/src/routes/orders.ts
+index a9669c0..fde924b 100644
+--- a/artifacts/api-server/src/routes/orders.ts
++++ b/artifacts/api-server/src/routes/orders.ts
+@@ -5,9 +5,13 @@ import { eq, isNull, desc } from "drizzle-orm";
+ import { z } from "zod";
+ import { logger } from "../lib/logger";
+ import { p } from "../lib/req-param";
++import { requireUuidParam } from "../lib/validate-uuid";
+ 
+ const router: IRouter = Router();
+ 
++// Malformed UUID route params fail fast with HTTP 400 instead of reaching the DB.
++router.param("id", requireUuidParam("id"));
++
+ // ── Validation ──────────────────────────────────────────────────────────────
+ 
+ const CreateOrderBody = z.object({
+diff --git a/artifacts/api-server/src/routes/readyz.ts b/artifacts/api-server/src/routes/readyz.ts
+new file mode 100644
+index 0000000..93e0b69
+--- /dev/null
++++ b/artifacts/api-server/src/routes/readyz.ts
+@@ -0,0 +1,33 @@
++import { Router, type IRouter, type Request, type Response } from "express";
++import { sql } from "drizzle-orm";
++import { db } from "@workspace/db";
++import { ReadinessCheckResponse } from "@workspace/api-zod";
++import { logger } from "../lib/logger";
++
++const router: IRouter = Router();
++
++/**
++ * GET /readyz — database readiness check.
++ * Distinct from /healthz (process is up) — this confirms the process can
++ * actually reach PostgreSQL, so orchestration can distinguish "alive" from
++ * "ready to serve traffic".
++ */
++router.get("/readyz", async (_req: Request, res: Response) => {
++  try {
++    await db.execute(sql`select 1`);
++    const data = ReadinessCheckResponse.parse({
++      status: "ok",
++      checks: { database: "ok" },
++    });
++    res.json(data);
++  } catch (err) {
++    logger.error(err, "GET /readyz — database check failed");
++    const data = ReadinessCheckResponse.parse({
++      status: "error",
++      checks: { database: "error" },
++    });
++    res.status(503).json(data);
++  }
++});
++
++export default router;
+diff --git a/artifacts/api-server/tsconfig.json b/artifacts/api-server/tsconfig.json
+index 4f82bb6..13e8d2c 100644
+--- a/artifacts/api-server/tsconfig.json
++++ b/artifacts/api-server/tsconfig.json
+@@ -5,7 +5,9 @@
+     "tsBuildInfoFile": ".tsbuildinfo",
+     "outDir": "dist",
+     "rootDir": "src",
+-    "types": ["node"]
++    "types": ["node"],
++    "noEmit": true,
++    "allowImportingTsExtensions": true
+   },
+   "include": ["src"],
+   "references": [
+diff --git a/docs/MIGRATIONS.md b/docs/MIGRATIONS.md
+new file mode 100644
+index 0000000..473c863
+--- /dev/null
++++ b/docs/MIGRATIONS.md
+@@ -0,0 +1,48 @@
++# Database Migrations (PS-01)
++
++As of PS-01, schema changes go through **versioned Drizzle migrations**.
++Automatic `drizzle-kit push` has been removed from `scripts/post-merge.sh`.
++Nothing runs migrations against the shared/live database automatically.
++
++## Workflow
++
++Run these from the repo root, or `cd lib/db` and drop the `--filter` prefix.
++
++1. **Generate** a migration from the current schema (writes SQL files under `lib/db/migrations/`):
++   ```bash
++   pnpm --filter @workspace/db run db:generate
++   ```
++2. **Apply** pending migrations to the database pointed at by `DATABASE_URL`:
++   ```bash
++   pnpm --filter @workspace/db run db:migrate
++   ```
++3. **Check** that the migration journal is consistent with the schema (no drift, no missing files):
++   ```bash
++   pnpm --filter @workspace/db run db:check
++   ```
++
++## Verification policy
++
++- New/changed migrations must be verified against a **clean, disposable** PostgreSQL
++  database first — never applied straight to the shared/live database.
++- Only apply `db:migrate` to the shared/live database as an explicit, deliberate step
++  once the migration has been reviewed and verified on a disposable database.
++- `push` / `push-force` (schema-diff-and-apply, no migration files) still exist as
++  manual, local-only developer scripts. Per `AGENTS.md`, `push --force` must never be
++  run by an agent, and neither script should be wired into any automated flow
++  (post-merge, startup, CI).
++
++## Rollback
++
++Drizzle does not auto-generate "down" migrations. To roll back a migration that has
++already been applied to a database:
++
++1. Identify the last-known-good migration in `lib/db/migrations/meta/_journal.json`.
++2. Write a new, explicit down migration (SQL) that reverses the specific change
++   (e.g. `DROP COLUMN`, restore a previous constraint) — do not hand-edit already
++   -applied migration files.
++3. Apply the down migration the same way as any other migration (`db:migrate`) after
++   verifying it on a disposable database.
++4. If the change was applied via the legacy `push` workflow (no migration file exists),
++   the rollback must be a manual, reviewed SQL statement — there is no generated
++   migration to reverse.
+diff --git a/lib/api-client-react/src/generated/api.schemas.ts b/lib/api-client-react/src/generated/api.schemas.ts
+index 0439d7d..142ae28 100644
+--- a/lib/api-client-react/src/generated/api.schemas.ts
++++ b/lib/api-client-react/src/generated/api.schemas.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Generated by orval v8.5.3 🍺
++ * Generated by orval v8.18.0 🍺
+  * Do not edit manually.
+  * Api
+  * API specification
+@@ -8,3 +8,13 @@
+ export interface HealthStatus {
+   status: string;
+ }
++
++export type ReadinessStatusChecks = {
++  database: string;
++};
++
++export interface ReadinessStatus {
++  status: string;
++  checks: ReadinessStatusChecks;
++}
++
+diff --git a/lib/api-client-react/src/generated/api.ts b/lib/api-client-react/src/generated/api.ts
+index ba51403..c8c805e 100644
+--- a/lib/api-client-react/src/generated/api.ts
++++ b/lib/api-client-react/src/generated/api.ts
+@@ -1,101 +1,205 @@
+ /**
+- * Generated by orval v8.5.3 🍺
++ * Generated by orval v8.18.0 🍺
+  * Do not edit manually.
+  * Api
+  * API specification
+  * OpenAPI spec version: 0.1.0
+  */
+-import { useQuery } from "@tanstack/react-query";
++import {
++  useQuery
++} from '@tanstack/react-query';
+ import type {
+   QueryFunction,
+   QueryKey,
+   UseQueryOptions,
+-  UseQueryResult,
+-} from "@tanstack/react-query";
++  UseQueryResult
++} from '@tanstack/react-query';
+ 
+-import type { HealthStatus } from "./api.schemas";
++import type {
++  HealthStatus,
++  ReadinessStatus
++} from './api.schemas';
+ 
+-import { customFetch } from "../custom-fetch";
+-import type { ErrorType } from "../custom-fetch";
++import { customFetch } from '../custom-fetch';
++import type { ErrorType } from '../custom-fetch';
+ 
+ type AwaitedInput<T> = PromiseLike<T> | T;
+ 
+-type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
++      type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
++
+ 
+ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
+ 
++
++
++const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKey: K } => {
++  const result = { queryKey } as T & { queryKey: K };
++  for (const key of Object.keys(query)) {
++    // The explicit queryKey always wins, matching the previous
++    // `{ ...query, queryKey }` spread where it was set last.
++    if (key === 'queryKey') continue;
++    Object.defineProperty(result, key, {
++      enumerable: true,
++      configurable: true,
++      get: () => (query as Record<string, unknown>)[key],
++    });
++  }
++  return result;
++};
++
++export const getHealthCheckUrl = () => {
++
++
++
++
++  return `/api/healthz`
++}
++
+ /**
+  * Returns server health status
+  * @summary Health check
+  */
+-export const getHealthCheckUrl = () => {
+-  return `/api/healthz`;
+-};
++export const healthCheck = async ( options?: RequestInit): Promise<HealthStatus> => {
+ 
+-export const healthCheck = async (
+-  options?: RequestInit,
+-): Promise<HealthStatus> => {
+-  return customFetch<HealthStatus>(getHealthCheckUrl(), {
++  return customFetch<HealthStatus>(getHealthCheckUrl(),
++  {
+     ...options,
+-    method: "GET",
+-  });
+-};
++    method: 'GET'
++
++
++  }
++);}
++
++
++
++
+ 
+ export const getHealthCheckQueryKey = () => {
+-  return [`/api/healthz`] as const;
+-};
++    return [
++    `/api/healthz`
++    ] as const;
++    }
+ 
+-export const getHealthCheckQueryOptions = <
+-  TData = Awaited<ReturnType<typeof healthCheck>>,
+-  TError = ErrorType<unknown>,
+->(options?: {
+-  query?: UseQueryOptions<
+-    Awaited<ReturnType<typeof healthCheck>>,
+-    TError,
+-    TData
+-  >;
+-  request?: SecondParameter<typeof customFetch>;
+-}) => {
+-  const { query: queryOptions, request: requestOptions } = options ?? {};
+-
+-  const queryKey = queryOptions?.queryKey ?? getHealthCheckQueryKey();
+-
+-  const queryFn: QueryFunction<Awaited<ReturnType<typeof healthCheck>>> = ({
+-    signal,
+-  }) => healthCheck({ signal, ...requestOptions });
+-
+-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+-    Awaited<ReturnType<typeof healthCheck>>,
+-    TError,
+-    TData
+-  > & { queryKey: QueryKey };
+-};
+ 
+-export type HealthCheckQueryResult = NonNullable<
+-  Awaited<ReturnType<typeof healthCheck>>
+->;
+-export type HealthCheckQueryError = ErrorType<unknown>;
++export const getHealthCheckQueryOptions = <TData = Awaited<ReturnType<typeof healthCheck>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
++) => {
++
++const {query: queryOptions, request: requestOptions} = options ?? {};
++
++  const queryKey =  queryOptions?.queryKey ?? getHealthCheckQueryKey();
++
++
++
++    const queryFn: QueryFunction<Awaited<ReturnType<typeof healthCheck>>> = ({ signal }) => healthCheck({ signal, ...requestOptions });
++
++
++
++
++
++   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData> & { queryKey: QueryKey }
++}
++
++export type HealthCheckQueryResult = NonNullable<Awaited<ReturnType<typeof healthCheck>>>
++export type HealthCheckQueryError = ErrorType<unknown>
++
+ 
+ /**
+  * @summary Health check
+  */
+ 
+-export function useHealthCheck<
+-  TData = Awaited<ReturnType<typeof healthCheck>>,
+-  TError = ErrorType<unknown>,
+->(options?: {
+-  query?: UseQueryOptions<
+-    Awaited<ReturnType<typeof healthCheck>>,
+-    TError,
+-    TData
+-  >;
+-  request?: SecondParameter<typeof customFetch>;
+-}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+-  const queryOptions = getHealthCheckQueryOptions(options);
+-
+-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+-    queryKey: QueryKey;
+-  };
+-
+-  return { ...query, queryKey: queryOptions.queryKey };
++export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, TError = ErrorType<unknown>>(
++  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
++
++ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
++
++  const queryOptions = getHealthCheckQueryOptions(options)
++
++  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
++
++  return withQueryKey(query, queryOptions.queryKey);
++}
++
++
++
++
++
++
++
++export const getReadinessCheckUrl = () => {
++
++
++
++
++  return `/api/readyz`
++}
++
++/**
++ * Returns whether the server can reach its dependencies (e.g. PostgreSQL)
++ * @summary Readiness check
++ */
++export const readinessCheck = async ( options?: RequestInit): Promise<ReadinessStatus> => {
++
++  return customFetch<ReadinessStatus>(getReadinessCheckUrl(),
++  {
++    ...options,
++    method: 'GET'
++
++
++  }
++);}
++
++
++
++
++
++export const getReadinessCheckQueryKey = () => {
++    return [
++    `/api/readyz`
++    ] as const;
++    }
++
++
++export const getReadinessCheckQueryOptions = <TData = Awaited<ReturnType<typeof readinessCheck>>, TError = ErrorType<ReadinessStatus>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof readinessCheck>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
++) => {
++
++const {query: queryOptions, request: requestOptions} = options ?? {};
++
++  const queryKey =  queryOptions?.queryKey ?? getReadinessCheckQueryKey();
++
++
++
++    const queryFn: QueryFunction<Awaited<ReturnType<typeof readinessCheck>>> = ({ signal }) => readinessCheck({ signal, ...requestOptions });
++
++
++
++
++
++   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof readinessCheck>>, TError, TData> & { queryKey: QueryKey }
++}
++
++export type ReadinessCheckQueryResult = NonNullable<Awaited<ReturnType<typeof readinessCheck>>>
++export type ReadinessCheckQueryError = ErrorType<ReadinessStatus>
++
++
++/**
++ * @summary Readiness check
++ */
++
++export function useReadinessCheck<TData = Awaited<ReturnType<typeof readinessCheck>>, TError = ErrorType<ReadinessStatus>>(
++  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof readinessCheck>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
++
++ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
++
++  const queryOptions = getReadinessCheckQueryOptions(options)
++
++  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
++
++  return withQueryKey(query, queryOptions.queryKey);
+ }
++
++
++
++
++
++
++
+diff --git a/lib/api-spec/openapi.yaml b/lib/api-spec/openapi.yaml
+index bbcb269..3ca6b9b 100644
+--- a/lib/api-spec/openapi.yaml
++++ b/lib/api-spec/openapi.yaml
+@@ -24,6 +24,25 @@ paths:
+             application/json:
+               schema:
+                 $ref: "#/components/schemas/HealthStatus"
++  /readyz:
++    get:
++      operationId: readinessCheck
++      tags: [health]
++      summary: Readiness check
++      description: Returns whether the server can reach its dependencies (e.g. PostgreSQL)
++      responses:
++        "200":
++          description: Ready
++          content:
++            application/json:
++              schema:
++                $ref: "#/components/schemas/ReadinessStatus"
++        "503":
++          description: Not ready
++          content:
++            application/json:
++              schema:
++                $ref: "#/components/schemas/ReadinessStatus"
+ components:
+   schemas:
+     HealthStatus:
+@@ -33,4 +52,19 @@ components:
+           type: string
+       required:
+         - status
++    ReadinessStatus:
++      type: object
++      properties:
++        status:
++          type: string
++        checks:
++          type: object
++          properties:
++            database:
++              type: string
++          required:
++            - database
++      required:
++        - status
++        - checks
+ 
+diff --git a/lib/api-zod/src/generated/api.ts b/lib/api-zod/src/generated/api.ts
+index fee3c58..bc94dd6 100644
+--- a/lib/api-zod/src/generated/api.ts
++++ b/lib/api-zod/src/generated/api.ts
+@@ -1,16 +1,31 @@
+ /**
+- * Generated by orval v8.5.3 🍺
++ * Generated by orval v8.18.0 🍺
+  * Do not edit manually.
+  * Api
+  * API specification
+  * OpenAPI spec version: 0.1.0
+  */
+-import * as zod from "zod";
++import * as zod from 'zod';
++
+ 
+ /**
+  * Returns server health status
+  * @summary Health check
+  */
+ export const HealthCheckResponse = zod.object({
+-  status: zod.string(),
+-});
++  "status": zod.string()
++})
++
++
++/**
++ * Returns whether the server can reach its dependencies (e.g. PostgreSQL)
++ * @summary Readiness check
++ */
++export const ReadinessCheckResponse = zod.object({
++  "status": zod.string(),
++  "checks": zod.object({
++  "database": zod.string()
++})
++})
++
++
+diff --git a/lib/api-zod/src/generated/types/healthStatus.ts b/lib/api-zod/src/generated/types/healthStatus.ts
+index f1ad88c..e43b587 100644
+--- a/lib/api-zod/src/generated/types/healthStatus.ts
++++ b/lib/api-zod/src/generated/types/healthStatus.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Generated by orval v8.5.3 🍺
++ * Generated by orval v8.18.0 🍺
+  * Do not edit manually.
+  * Api
+  * API specification
+diff --git a/lib/api-zod/src/generated/types/index.ts b/lib/api-zod/src/generated/types/index.ts
+index c816559..ba8dd28 100644
+--- a/lib/api-zod/src/generated/types/index.ts
++++ b/lib/api-zod/src/generated/types/index.ts
+@@ -1,9 +1,11 @@
+ /**
+- * Generated by orval v8.5.3 🍺
++ * Generated by orval v8.18.0 🍺
+  * Do not edit manually.
+  * Api
+  * API specification
+  * OpenAPI spec version: 0.1.0
+  */
+ 
+-export * from "./healthStatus";
++export * from './healthStatus';
++export * from './readinessStatus';
++export * from './readinessStatusChecks';
+diff --git a/lib/api-zod/src/generated/types/readinessStatus.ts b/lib/api-zod/src/generated/types/readinessStatus.ts
+new file mode 100644
+index 0000000..798c2a9
+--- /dev/null
++++ b/lib/api-zod/src/generated/types/readinessStatus.ts
+@@ -0,0 +1,13 @@
++/**
++ * Generated by orval v8.18.0 🍺
++ * Do not edit manually.
++ * Api
++ * API specification
++ * OpenAPI spec version: 0.1.0
++ */
++import type { ReadinessStatusChecks } from './readinessStatusChecks';
++
++export interface ReadinessStatus {
++  status: string;
++  checks: ReadinessStatusChecks;
++}
+diff --git a/lib/api-zod/src/generated/types/readinessStatusChecks.ts b/lib/api-zod/src/generated/types/readinessStatusChecks.ts
+new file mode 100644
+index 0000000..e4f836f
+--- /dev/null
++++ b/lib/api-zod/src/generated/types/readinessStatusChecks.ts
+@@ -0,0 +1,11 @@
++/**
++ * Generated by orval v8.18.0 🍺
++ * Do not edit manually.
++ * Api
++ * API specification
++ * OpenAPI spec version: 0.1.0
++ */
++
++export type ReadinessStatusChecks = {
++  database: string;
++};
+diff --git a/lib/db/drizzle.config.ts b/lib/db/drizzle.config.ts
+index dcf8b84..1c3e81c 100644
+--- a/lib/db/drizzle.config.ts
++++ b/lib/db/drizzle.config.ts
+@@ -7,6 +7,7 @@ if (!process.env.DATABASE_URL) {
+ 
+ export default defineConfig({
+   schema: path.join(__dirname, "./src/schema/index.ts"),
++  out: "./migrations",
+   dialect: "postgresql",
+   dbCredentials: {
+     url: process.env.DATABASE_URL,
+diff --git a/lib/db/migrations/0000_zippy_leech.sql b/lib/db/migrations/0000_zippy_leech.sql
+new file mode 100644
+index 0000000..8a9c05c
+--- /dev/null
++++ b/lib/db/migrations/0000_zippy_leech.sql
+@@ -0,0 +1,133 @@
++CREATE TYPE "public"."account_status" AS ENUM('active', 'disabled');--> statement-breakpoint
++CREATE TYPE "public"."admin_status" AS ENUM('active', 'inactive');--> statement-breakpoint
++CREATE TYPE "public"."capacity_customer_status" AS ENUM('active', 'removed', 'cancelled');--> statement-breakpoint
++CREATE TYPE "public"."capacity_kind" AS ENUM('Z2_PS5', 'Z2_PS4', 'Z3_PS5');--> statement-breakpoint
++CREATE TYPE "public"."capacity_platform" AS ENUM('PS4', 'PS5');--> statement-breakpoint
++CREATE TYPE "public"."game_platform" AS ENUM('PS5_ONLY', 'PS4_AND_PS5', 'PS4_ONLY');--> statement-breakpoint
++CREATE TYPE "public"."game_status" AS ENUM('active', 'inactive');--> statement-breakpoint
++CREATE TYPE "public"."order_source" AS ENUM('manual', 'woocommerce', 'api');--> statement-breakpoint
++CREATE TYPE "public"."order_status" AS ENUM('pending_assignment', 'assigned', 'delivered', 'failed', 'cancelled');--> statement-breakpoint
++CREATE TABLE "admins" (
++	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
++	"username" text NOT NULL,
++	"password_hash" text NOT NULL,
++	"status" "admin_status" DEFAULT 'active' NOT NULL,
++	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
++	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
++	"deleted_at" timestamp with time zone,
++	CONSTRAINT "admins_username_unique" UNIQUE("username")
++);
++--> statement-breakpoint
++CREATE TABLE "games" (
++	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
++	"title" text NOT NULL,
++	"cover_url" text,
++	"platform" "game_platform" NOT NULL,
++	"status" "game_status" DEFAULT 'active' NOT NULL,
++	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
++	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
++	"deleted_at" timestamp with time zone
++);
++--> statement-breakpoint
++CREATE TABLE "accounts" (
++	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
++	"game_id" uuid NOT NULL,
++	"account_code" text NOT NULL,
++	"account_number_prefix" text NOT NULL,
++	"account_number_seq" integer NOT NULL,
++	"display_number" text NOT NULL,
++	"email" text NOT NULL,
++	"email_normalized" text NOT NULL,
++	"playstation_password_encrypted" text NOT NULL,
++	"email_password_encrypted" text NOT NULL,
++	"family_management_email_encrypted" text,
++	"online_id" text,
++	"birth_date" text,
++	"status" "account_status" DEFAULT 'active' NOT NULL,
++	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
++	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
++	"deleted_at" timestamp with time zone,
++	CONSTRAINT "accounts_account_code_unique" UNIQUE("account_code")
++);
++--> statement-breakpoint
++CREATE TABLE "account_backup_codes" (
++	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
++	"account_id" uuid NOT NULL,
++	"code_encrypted" text NOT NULL,
++	"used_at" timestamp with time zone,
++	"created_at" timestamp with time zone DEFAULT now() NOT NULL
++);
++--> statement-breakpoint
++CREATE TABLE "account_capacities" (
++	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
++	"account_id" uuid NOT NULL,
++	"capacity_kind" "capacity_kind" NOT NULL,
++	"instance_no" integer NOT NULL,
++	"display_label" text NOT NULL,
++	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
++	CONSTRAINT "account_capacities_unique_slot" UNIQUE("account_id","capacity_kind","instance_no")
++);
++--> statement-breakpoint
++CREATE TABLE "orders" (
++	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
++	"order_code" text NOT NULL,
++	"source" "order_source" DEFAULT 'manual' NOT NULL,
++	"status" "order_status" DEFAULT 'pending_assignment' NOT NULL,
++	"notes" text,
++	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
++	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
++	"deleted_at" timestamp with time zone,
++	CONSTRAINT "orders_order_code_unique" UNIQUE("order_code")
++);
++--> statement-breakpoint
++CREATE TABLE "capacity_customers" (
++	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
++	"capacity_id" uuid NOT NULL,
++	"order_id" uuid NOT NULL,
++	"customer_phone_encrypted" text NOT NULL,
++	"customer_phone_blind_index" text,
++	"status" "capacity_customer_status" DEFAULT 'active' NOT NULL,
++	"note" text,
++	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
++	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
++	"deleted_at" timestamp with time zone
++);
++--> statement-breakpoint
++CREATE TABLE "audit_logs" (
++	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
++	"admin_id" uuid,
++	"action" text NOT NULL,
++	"entity" text NOT NULL,
++	"entity_id" text,
++	"before" jsonb,
++	"after" jsonb,
++	"created_at" timestamp with time zone DEFAULT now() NOT NULL
++);
++--> statement-breakpoint
++ALTER TABLE "accounts" ADD CONSTRAINT "accounts_game_id_games_id_fk" FOREIGN KEY ("game_id") REFERENCES "public"."games"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
++ALTER TABLE "account_backup_codes" ADD CONSTRAINT "account_backup_codes_account_id_accounts_id_fk" FOREIGN KEY ("account_id") REFERENCES "public"."accounts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
++ALTER TABLE "account_capacities" ADD CONSTRAINT "account_capacities_account_id_accounts_id_fk" FOREIGN KEY ("account_id") REFERENCES "public"."accounts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
++ALTER TABLE "capacity_customers" ADD CONSTRAINT "capacity_customers_capacity_id_account_capacities_id_fk" FOREIGN KEY ("capacity_id") REFERENCES "public"."account_capacities"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
++ALTER TABLE "capacity_customers" ADD CONSTRAINT "capacity_customers_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
++ALTER TABLE "audit_logs" ADD CONSTRAINT "audit_logs_admin_id_admins_id_fk" FOREIGN KEY ("admin_id") REFERENCES "public"."admins"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
++CREATE INDEX "games_status_idx" ON "games" USING btree ("status");--> statement-breakpoint
++CREATE INDEX "games_deleted_at_idx" ON "games" USING btree ("deleted_at");--> statement-breakpoint
++CREATE UNIQUE INDEX "accounts_email_normalized_active_uniq" ON "accounts" USING btree ("email_normalized") WHERE "accounts"."deleted_at" IS NULL;--> statement-breakpoint
++CREATE INDEX "accounts_game_id_idx" ON "accounts" USING btree ("game_id");--> statement-breakpoint
++CREATE INDEX "accounts_status_idx" ON "accounts" USING btree ("status");--> statement-breakpoint
++CREATE INDEX "accounts_deleted_at_idx" ON "accounts" USING btree ("deleted_at");--> statement-breakpoint
++CREATE INDEX "accounts_account_code_idx" ON "accounts" USING btree ("account_code");--> statement-breakpoint
++CREATE INDEX "account_backup_codes_account_id_idx" ON "account_backup_codes" USING btree ("account_id");--> statement-breakpoint
++CREATE INDEX "account_capacities_account_id_idx" ON "account_capacities" USING btree ("account_id");--> statement-breakpoint
++CREATE INDEX "orders_status_idx" ON "orders" USING btree ("status");--> statement-breakpoint
++CREATE INDEX "orders_source_idx" ON "orders" USING btree ("source");--> statement-breakpoint
++CREATE INDEX "orders_deleted_at_idx" ON "orders" USING btree ("deleted_at");--> statement-breakpoint
++CREATE UNIQUE INDEX "capacity_customers_active_assignment_uniq" ON "capacity_customers" USING btree ("capacity_id","order_id") WHERE "capacity_customers"."status" = 'active';--> statement-breakpoint
++CREATE INDEX "capacity_customers_capacity_id_idx" ON "capacity_customers" USING btree ("capacity_id");--> statement-breakpoint
++CREATE INDEX "capacity_customers_order_id_idx" ON "capacity_customers" USING btree ("order_id");--> statement-breakpoint
++CREATE INDEX "capacity_customers_status_idx" ON "capacity_customers" USING btree ("status");--> statement-breakpoint
++CREATE INDEX "capacity_customers_phone_blind_idx" ON "capacity_customers" USING btree ("customer_phone_blind_index");--> statement-breakpoint
++CREATE INDEX "audit_logs_admin_id_idx" ON "audit_logs" USING btree ("admin_id");--> statement-breakpoint
++CREATE INDEX "audit_logs_entity_idx" ON "audit_logs" USING btree ("entity");--> statement-breakpoint
++CREATE INDEX "audit_logs_entity_id_idx" ON "audit_logs" USING btree ("entity_id");--> statement-breakpoint
++CREATE INDEX "audit_logs_created_at_idx" ON "audit_logs" USING btree ("created_at");
+\ No newline at end of file
+diff --git a/lib/db/migrations/meta/0000_snapshot.json b/lib/db/migrations/meta/0000_snapshot.json
+new file mode 100644
+index 0000000..8c15fde
+--- /dev/null
++++ b/lib/db/migrations/meta/0000_snapshot.json
+@@ -0,0 +1,1099 @@
++{
++  "id": "7d506f1d-7fed-4bbe-872e-74cea087b03a",
++  "prevId": "00000000-0000-0000-0000-000000000000",
++  "version": "7",
++  "dialect": "postgresql",
++  "tables": {
++    "public.admins": {
++      "name": "admins",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "username": {
++          "name": "username",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "password_hash": {
++          "name": "password_hash",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "status": {
++          "name": "status",
++          "type": "admin_status",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "'active'"
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "updated_at": {
++          "name": "updated_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "deleted_at": {
++          "name": "deleted_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": false
++        }
++      },
++      "indexes": {},
++      "foreignKeys": {},
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {
++        "admins_username_unique": {
++          "name": "admins_username_unique",
++          "nullsNotDistinct": false,
++          "columns": [
++            "username"
++          ]
++        }
++      },
++      "policies": {},
++      "checkConstraints": {},
++      "isRLSEnabled": false
++    },
++    "public.games": {
++      "name": "games",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "title": {
++          "name": "title",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "cover_url": {
++          "name": "cover_url",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "platform": {
++          "name": "platform",
++          "type": "game_platform",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "status": {
++          "name": "status",
++          "type": "game_status",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "'active'"
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "updated_at": {
++          "name": "updated_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "deleted_at": {
++          "name": "deleted_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": false
++        }
++      },
++      "indexes": {
++        "games_status_idx": {
++          "name": "games_status_idx",
++          "columns": [
++            {
++              "expression": "status",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "games_deleted_at_idx": {
++          "name": "games_deleted_at_idx",
++          "columns": [
++            {
++              "expression": "deleted_at",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        }
++      },
++      "foreignKeys": {},
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {},
++      "policies": {},
++      "checkConstraints": {},
++      "isRLSEnabled": false
++    },
++    "public.accounts": {
++      "name": "accounts",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "game_id": {
++          "name": "game_id",
++          "type": "uuid",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "account_code": {
++          "name": "account_code",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "account_number_prefix": {
++          "name": "account_number_prefix",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "account_number_seq": {
++          "name": "account_number_seq",
++          "type": "integer",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "display_number": {
++          "name": "display_number",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "email": {
++          "name": "email",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "email_normalized": {
++          "name": "email_normalized",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "playstation_password_encrypted": {
++          "name": "playstation_password_encrypted",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "email_password_encrypted": {
++          "name": "email_password_encrypted",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "family_management_email_encrypted": {
++          "name": "family_management_email_encrypted",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "online_id": {
++          "name": "online_id",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "birth_date": {
++          "name": "birth_date",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "status": {
++          "name": "status",
++          "type": "account_status",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "'active'"
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "updated_at": {
++          "name": "updated_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "deleted_at": {
++          "name": "deleted_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": false
++        }
++      },
++      "indexes": {
++        "accounts_email_normalized_active_uniq": {
++          "name": "accounts_email_normalized_active_uniq",
++          "columns": [
++            {
++              "expression": "email_normalized",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": true,
++          "where": "\"accounts\".\"deleted_at\" IS NULL",
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "accounts_game_id_idx": {
++          "name": "accounts_game_id_idx",
++          "columns": [
++            {
++              "expression": "game_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "accounts_status_idx": {
++          "name": "accounts_status_idx",
++          "columns": [
++            {
++              "expression": "status",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "accounts_deleted_at_idx": {
++          "name": "accounts_deleted_at_idx",
++          "columns": [
++            {
++              "expression": "deleted_at",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "accounts_account_code_idx": {
++          "name": "accounts_account_code_idx",
++          "columns": [
++            {
++              "expression": "account_code",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        }
++      },
++      "foreignKeys": {
++        "accounts_game_id_games_id_fk": {
++          "name": "accounts_game_id_games_id_fk",
++          "tableFrom": "accounts",
++          "tableTo": "games",
++          "columnsFrom": [
++            "game_id"
++          ],
++          "columnsTo": [
++            "id"
++          ],
++          "onDelete": "no action",
++          "onUpdate": "no action"
++        }
++      },
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {
++        "accounts_account_code_unique": {
++          "name": "accounts_account_code_unique",
++          "nullsNotDistinct": false,
++          "columns": [
++            "account_code"
++          ]
++        }
++      },
++      "policies": {},
++      "checkConstraints": {},
++      "isRLSEnabled": false
++    },
++    "public.account_backup_codes": {
++      "name": "account_backup_codes",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "account_id": {
++          "name": "account_id",
++          "type": "uuid",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "code_encrypted": {
++          "name": "code_encrypted",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "used_at": {
++          "name": "used_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        }
++      },
++      "indexes": {
++        "account_backup_codes_account_id_idx": {
++          "name": "account_backup_codes_account_id_idx",
++          "columns": [
++            {
++              "expression": "account_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        }
++      },
++      "foreignKeys": {
++        "account_backup_codes_account_id_accounts_id_fk": {
++          "name": "account_backup_codes_account_id_accounts_id_fk",
++          "tableFrom": "account_backup_codes",
++          "tableTo": "accounts",
++          "columnsFrom": [
++            "account_id"
++          ],
++          "columnsTo": [
++            "id"
++          ],
++          "onDelete": "no action",
++          "onUpdate": "no action"
++        }
++      },
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {},
++      "policies": {},
++      "checkConstraints": {},
++      "isRLSEnabled": false
++    },
++    "public.account_capacities": {
++      "name": "account_capacities",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "account_id": {
++          "name": "account_id",
++          "type": "uuid",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "capacity_kind": {
++          "name": "capacity_kind",
++          "type": "capacity_kind",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "instance_no": {
++          "name": "instance_no",
++          "type": "integer",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "display_label": {
++          "name": "display_label",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        }
++      },
++      "indexes": {
++        "account_capacities_account_id_idx": {
++          "name": "account_capacities_account_id_idx",
++          "columns": [
++            {
++              "expression": "account_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        }
++      },
++      "foreignKeys": {
++        "account_capacities_account_id_accounts_id_fk": {
++          "name": "account_capacities_account_id_accounts_id_fk",
++          "tableFrom": "account_capacities",
++          "tableTo": "accounts",
++          "columnsFrom": [
++            "account_id"
++          ],
++          "columnsTo": [
++            "id"
++          ],
++          "onDelete": "no action",
++          "onUpdate": "no action"
++        }
++      },
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {
++        "account_capacities_unique_slot": {
++          "name": "account_capacities_unique_slot",
++          "nullsNotDistinct": false,
++          "columns": [
++            "account_id",
++            "capacity_kind",
++            "instance_no"
++          ]
++        }
++      },
++      "policies": {},
++      "checkConstraints": {},
++      "isRLSEnabled": false
++    },
++    "public.orders": {
++      "name": "orders",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "order_code": {
++          "name": "order_code",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "source": {
++          "name": "source",
++          "type": "order_source",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "'manual'"
++        },
++        "status": {
++          "name": "status",
++          "type": "order_status",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "'pending_assignment'"
++        },
++        "notes": {
++          "name": "notes",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "updated_at": {
++          "name": "updated_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "deleted_at": {
++          "name": "deleted_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": false
++        }
++      },
++      "indexes": {
++        "orders_status_idx": {
++          "name": "orders_status_idx",
++          "columns": [
++            {
++              "expression": "status",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "orders_source_idx": {
++          "name": "orders_source_idx",
++          "columns": [
++            {
++              "expression": "source",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "orders_deleted_at_idx": {
++          "name": "orders_deleted_at_idx",
++          "columns": [
++            {
++              "expression": "deleted_at",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        }
++      },
++      "foreignKeys": {},
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {
++        "orders_order_code_unique": {
++          "name": "orders_order_code_unique",
++          "nullsNotDistinct": false,
++          "columns": [
++            "order_code"
++          ]
++        }
++      },
++      "policies": {},
++      "checkConstraints": {},
++      "isRLSEnabled": false
++    },
++    "public.capacity_customers": {
++      "name": "capacity_customers",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "capacity_id": {
++          "name": "capacity_id",
++          "type": "uuid",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "order_id": {
++          "name": "order_id",
++          "type": "uuid",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "customer_phone_encrypted": {
++          "name": "customer_phone_encrypted",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "customer_phone_blind_index": {
++          "name": "customer_phone_blind_index",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "status": {
++          "name": "status",
++          "type": "capacity_customer_status",
++          "typeSchema": "public",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "'active'"
++        },
++        "note": {
++          "name": "note",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "updated_at": {
++          "name": "updated_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        },
++        "deleted_at": {
++          "name": "deleted_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": false
++        }
++      },
++      "indexes": {
++        "capacity_customers_active_assignment_uniq": {
++          "name": "capacity_customers_active_assignment_uniq",
++          "columns": [
++            {
++              "expression": "capacity_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            },
++            {
++              "expression": "order_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": true,
++          "where": "\"capacity_customers\".\"status\" = 'active'",
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "capacity_customers_capacity_id_idx": {
++          "name": "capacity_customers_capacity_id_idx",
++          "columns": [
++            {
++              "expression": "capacity_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "capacity_customers_order_id_idx": {
++          "name": "capacity_customers_order_id_idx",
++          "columns": [
++            {
++              "expression": "order_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "capacity_customers_status_idx": {
++          "name": "capacity_customers_status_idx",
++          "columns": [
++            {
++              "expression": "status",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "capacity_customers_phone_blind_idx": {
++          "name": "capacity_customers_phone_blind_idx",
++          "columns": [
++            {
++              "expression": "customer_phone_blind_index",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        }
++      },
++      "foreignKeys": {
++        "capacity_customers_capacity_id_account_capacities_id_fk": {
++          "name": "capacity_customers_capacity_id_account_capacities_id_fk",
++          "tableFrom": "capacity_customers",
++          "tableTo": "account_capacities",
++          "columnsFrom": [
++            "capacity_id"
++          ],
++          "columnsTo": [
++            "id"
++          ],
++          "onDelete": "no action",
++          "onUpdate": "no action"
++        },
++        "capacity_customers_order_id_orders_id_fk": {
++          "name": "capacity_customers_order_id_orders_id_fk",
++          "tableFrom": "capacity_customers",
++          "tableTo": "orders",
++          "columnsFrom": [
++            "order_id"
++          ],
++          "columnsTo": [
++            "id"
++          ],
++          "onDelete": "no action",
++          "onUpdate": "no action"
++        }
++      },
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {},
++      "policies": {},
++      "checkConstraints": {},
++      "isRLSEnabled": false
++    },
++    "public.audit_logs": {
++      "name": "audit_logs",
++      "schema": "",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "uuid",
++          "primaryKey": true,
++          "notNull": true,
++          "default": "gen_random_uuid()"
++        },
++        "admin_id": {
++          "name": "admin_id",
++          "type": "uuid",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "action": {
++          "name": "action",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "entity": {
++          "name": "entity",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true
++        },
++        "entity_id": {
++          "name": "entity_id",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "before": {
++          "name": "before",
++          "type": "jsonb",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "after": {
++          "name": "after",
++          "type": "jsonb",
++          "primaryKey": false,
++          "notNull": false
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "timestamp with time zone",
++          "primaryKey": false,
++          "notNull": true,
++          "default": "now()"
++        }
++      },
++      "indexes": {
++        "audit_logs_admin_id_idx": {
++          "name": "audit_logs_admin_id_idx",
++          "columns": [
++            {
++              "expression": "admin_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "audit_logs_entity_idx": {
++          "name": "audit_logs_entity_idx",
++          "columns": [
++            {
++              "expression": "entity",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "audit_logs_entity_id_idx": {
++          "name": "audit_logs_entity_id_idx",
++          "columns": [
++            {
++              "expression": "entity_id",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        },
++        "audit_logs_created_at_idx": {
++          "name": "audit_logs_created_at_idx",
++          "columns": [
++            {
++              "expression": "created_at",
++              "isExpression": false,
++              "asc": true,
++              "nulls": "last"
++            }
++          ],
++          "isUnique": false,
++          "concurrently": false,
++          "method": "btree",
++          "with": {}
++        }
++      },
++      "foreignKeys": {
++        "audit_logs_admin_id_admins_id_fk": {
++          "name": "audit_logs_admin_id_admins_id_fk",
++          "tableFrom": "audit_logs",
++          "tableTo": "admins",
++          "columnsFrom": [
++            "admin_id"
++          ],
++          "columnsTo": [
++            "id"
++          ],
++          "onDelete": "no action",
++          "onUpdate": "no action"
++        }
++      },
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {},
++      "policies": {},
++      "checkConstraints": {},
++      "isRLSEnabled": false
++    }
++  },
++  "enums": {
++    "public.account_status": {
++      "name": "account_status",
++      "schema": "public",
++      "values": [
++        "active",
++        "disabled"
++      ]
++    },
++    "public.admin_status": {
++      "name": "admin_status",
++      "schema": "public",
++      "values": [
++        "active",
++        "inactive"
++      ]
++    },
++    "public.capacity_customer_status": {
++      "name": "capacity_customer_status",
++      "schema": "public",
++      "values": [
++        "active",
++        "removed",
++        "cancelled"
++      ]
++    },
++    "public.capacity_kind": {
++      "name": "capacity_kind",
++      "schema": "public",
++      "values": [
++        "Z2_PS5",
++        "Z2_PS4",
++        "Z3_PS5"
++      ]
++    },
++    "public.capacity_platform": {
++      "name": "capacity_platform",
++      "schema": "public",
++      "values": [
++        "PS4",
++        "PS5"
++      ]
++    },
++    "public.game_platform": {
++      "name": "game_platform",
++      "schema": "public",
++      "values": [
++        "PS5_ONLY",
++        "PS4_AND_PS5",
++        "PS4_ONLY"
++      ]
++    },
++    "public.game_status": {
++      "name": "game_status",
++      "schema": "public",
++      "values": [
++        "active",
++        "inactive"
++      ]
++    },
++    "public.order_source": {
++      "name": "order_source",
++      "schema": "public",
++      "values": [
++        "manual",
++        "woocommerce",
++        "api"
++      ]
++    },
++    "public.order_status": {
++      "name": "order_status",
++      "schema": "public",
++      "values": [
++        "pending_assignment",
++        "assigned",
++        "delivered",
++        "failed",
++        "cancelled"
++      ]
++    }
++  },
++  "schemas": {},
++  "sequences": {},
++  "roles": {},
++  "policies": {},
++  "views": {},
++  "_meta": {
++    "columns": {},
++    "schemas": {},
++    "tables": {}
++  }
++}
+\ No newline at end of file
+diff --git a/lib/db/migrations/meta/_journal.json b/lib/db/migrations/meta/_journal.json
+new file mode 100644
+index 0000000..9315ce7
+--- /dev/null
++++ b/lib/db/migrations/meta/_journal.json
+@@ -0,0 +1,13 @@
++{
++  "version": "7",
++  "dialect": "postgresql",
++  "entries": [
++    {
++      "idx": 0,
++      "version": "7",
++      "when": 1784046823691,
++      "tag": "0000_zippy_leech",
++      "breakpoints": true
++    }
++  ]
++}
+\ No newline at end of file
+diff --git a/lib/db/package.json b/lib/db/package.json
+index d599c70..3f8a73a 100644
+--- a/lib/db/package.json
++++ b/lib/db/package.json
+@@ -9,6 +9,9 @@
+     "./helpers": "./src/helpers/index.ts"
+   },
+   "scripts": {
++    "db:generate": "drizzle-kit generate --config ./drizzle.config.ts",
++    "db:migrate": "drizzle-kit migrate --config ./drizzle.config.ts",
++    "db:check": "drizzle-kit check --config ./drizzle.config.ts",
+     "push": "drizzle-kit push --config ./drizzle.config.ts",
+     "push-force": "drizzle-kit push --force --config ./drizzle.config.ts"
+   },
+diff --git a/scripts/post-merge.sh b/scripts/post-merge.sh
+index ab61c44..f71e8cf 100644
+--- a/scripts/post-merge.sh
++++ b/scripts/post-merge.sh
+@@ -1,4 +1,12 @@
+ #!/bin/bash
+ set -e
+ pnpm install --frozen-lockfile
+-pnpm --filter db push
++
++# NOTE (PS-01): automatic `drizzle-kit push` was removed from post-merge.
++# Schema changes must now go through versioned migrations instead:
++#   pnpm --filter @workspace/db run db:generate   # write a new migration
++#   pnpm --filter @workspace/db run db:migrate    # apply pending migrations
++#   pnpm --filter @workspace/db run db:check      # verify migration history is consistent
++# See docs/MIGRATIONS.md for the full workflow and rollback notes.
++# Post-merge intentionally does NOT run migrations automatically against the
++# shared database — apply them manually/deliberately after review.

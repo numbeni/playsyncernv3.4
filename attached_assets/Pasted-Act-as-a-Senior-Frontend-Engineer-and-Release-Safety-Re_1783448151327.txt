@@ -1,0 +1,132 @@
+Act as a Senior Frontend Engineer and Release-Safety Reviewer.
+
+We are working on PlaySyncer.
+
+Current task:
+Phase 2A.1 — Account Form Validation & Capacity Label Fix
+
+Important limits:
+Do NOT redesign the app.
+Do NOT add backend.
+Do NOT add database.
+Do NOT add authentication.
+Do NOT add WooCommerce.
+Do NOT add orders or push delivery.
+Do NOT add localStorage.
+Only apply the requested frontend/mock-state fixes.
+
+Inspect first:
+- src/components/AccountFormModal.tsx
+- src/components/AccountCard.tsx
+- src/components/AccountDetailsModal.tsx
+- src/domain/accounts/types.ts
+- src/domain/slots/types.ts
+- src/hooks/useGames.tsx
+- src/components/SmartSearch.tsx
+- src/mocks/playSyncerMockData.ts
+
+Required changes:
+
+1. Email validation
+
+In account create/edit form, validate these fields as real email format:
+
+- Email
+- Family Management Email
+
+Rules:
+- Trim whitespace.
+- Empty value is invalid.
+- Invalid email format must show a clear Persian validation message.
+- Do not allow submit if email format is invalid.
+- Keep these fields searchable after save.
+
+2. Birth Date validation
+
+In account create/edit form, validate Birth Date as Gregorian date format.
+
+Required format:
+- YYYY/MM/DD
+
+Examples:
+- Valid: 2001/08/27
+- Invalid: 2001-08-27
+- Invalid: 27/08/2001
+- Invalid: random text
+
+Rules:
+- Use slash `/` between year, month, and day.
+- Validate month range 01-12.
+- Validate day range 01-31 at minimum.
+- Empty value is invalid.
+- Show a clear Persian validation message if invalid.
+- Keep Birth Date searchable after save.
+
+3. Keep search compatibility
+
+After these fields are validated and saved, SmartSearch must still search:
+
+- Email
+- Family Management Email
+- Birth Date
+
+Do not rebuild SmartSearch unless needed.
+Only fix compatibility if validation changes break search.
+
+4. Fix Z2 PS4 label
+
+Currently Z2 PS4 is shown as:
+
+- Z2 PS4 #1
+
+This is incorrect.
+
+Because Z2 PS4 has only one capacity and is not duplicated like Z2 PS5, it must be displayed as:
+
+- Z2 PS4
+
+Apply this everywhere visible in UI:
+- AccountCard
+- capacity list
+- details/modal if shown
+- mock-generated capacities
+- any helper that generates capacity labels
+
+Important:
+- Z2 PS5 must still keep numbering:
+  - Z2 PS5 #1
+  - Z2 PS5 #2
+
+- Z3 PS5 remains:
+  - Z3 PS5
+
+- PS4_ONLY account/game capacity should be:
+  - Z2 PS4
+
+5. Do not rename internal files unless necessary
+
+If internal slot/capacity IDs use numbering, keep internal stable IDs if needed.
+But user-facing label must be Z2 PS4 without #1.
+
+6. Quality checks
+
+Run:
+- pnpm run typecheck
+- pnpm run build
+
+If lint exists:
+- pnpm run lint
+
+Fix TypeScript/build errors.
+
+Final response must include:
+- changed files
+- exact validation rules added
+- confirmation that Email and Family Management Email require valid email format
+- confirmation that Birth Date requires YYYY/MM/DD Gregorian format
+- confirmation that these fields remain searchable
+- confirmation that Z2 PS4 no longer displays #1
+- confirmation that Z2 PS5 numbering still exists
+- confirmation that no backend/database/auth/WooCommerce/orders/push delivery/localStorage was added
+- test results
+- remaining risks or follow-up notes

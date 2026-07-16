@@ -1,0 +1,264 @@
+@import "tailwindcss";
+@import "@fontsource-variable/vazirmatn";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+
+  --font-sans: "Vazirmatn Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-glow: var(--primary-glow);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-neon: var(--neon);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+}
+
+/* ============================================
+   DARK — Deep Navy (default)
+   ============================================ */
+:root,
+.dark {
+  --radius: 0.75rem;
+
+  --background: oklch(0.17 0.035 255);
+  --foreground: oklch(0.96 0.01 240);
+
+  --card: oklch(0.22 0.04 255);
+  --card-foreground: oklch(0.96 0.01 240);
+
+  --popover: oklch(0.20 0.04 255);
+  --popover-foreground: oklch(0.96 0.01 240);
+
+  --primary: oklch(0.62 0.16 250);
+  --primary-foreground: oklch(0.98 0.005 240);
+  --primary-glow: oklch(0.72 0.13 245);
+
+  --secondary: oklch(0.26 0.04 255);
+  --secondary-foreground: oklch(0.96 0.01 240);
+
+  --muted: oklch(0.24 0.035 255);
+  --muted-foreground: oklch(0.72 0.025 245);
+
+  --accent: oklch(0.30 0.07 250);
+  --accent-foreground: oklch(0.96 0.01 240);
+
+  --destructive: oklch(0.68 0.24 20);
+  --destructive-foreground: oklch(0.98 0 0);
+
+  --success: oklch(0.78 0.19 155);
+  --success-foreground: oklch(0.14 0.03 155);
+
+  --warning: oklch(0.82 0.17 80);
+  --warning-foreground: oklch(0.18 0.05 75);
+
+  --neon: oklch(0.72 0.13 245);
+
+  --border: oklch(1 0 0 / 7%);
+  --input: oklch(1 0 0 / 10%);
+  --ring: oklch(0.62 0.16 250);
+
+  --sidebar: oklch(0.15 0.035 255);
+  --sidebar-foreground: oklch(0.92 0.01 240);
+  --sidebar-accent: oklch(0.26 0.05 250);
+  --sidebar-accent-foreground: oklch(0.98 0.01 240);
+  --sidebar-border: oklch(1 0 0 / 7%);
+
+  --shadow-soft: 0 1px 2px 0 color-mix(in oklab, black 40%, transparent);
+  --shadow-elevated:
+    0 10px 30px -12px color-mix(in oklab, var(--primary) 30%, transparent),
+    0 4px 12px -4px color-mix(in oklab, black 45%, transparent);
+  --shadow-glow:
+    0 0 0 1px color-mix(in oklab, var(--primary) 35%, transparent),
+    0 8px 24px -8px color-mix(in oklab, var(--primary) 40%, transparent);
+
+  --gradient-primary: linear-gradient(135deg, var(--primary) 0%, var(--primary-glow) 100%);
+  --gradient-surface: linear-gradient(180deg,
+    color-mix(in oklab, var(--card) 100%, transparent),
+    color-mix(in oklab, var(--background) 60%, transparent));
+
+  --grid-color: color-mix(in oklab, var(--primary) 7%, transparent);
+}
+
+/* ============================================
+   LIGHT
+   ============================================ */
+.light {
+  --background: oklch(0.985 0.005 250);
+  --foreground: oklch(0.20 0.04 255);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.20 0.04 255);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.20 0.04 255);
+
+  --primary: oklch(0.50 0.16 255);
+  --primary-foreground: oklch(0.99 0.005 260);
+  --primary-glow: oklch(0.62 0.14 245);
+
+  --secondary: oklch(0.965 0.01 250);
+  --secondary-foreground: oklch(0.25 0.04 255);
+
+  --muted: oklch(0.965 0.008 250);
+  --muted-foreground: oklch(0.5 0.02 250);
+
+  --accent: oklch(0.94 0.04 250);
+  --accent-foreground: oklch(0.28 0.10 255);
+
+  --destructive: oklch(0.6 0.22 25);
+  --destructive-foreground: oklch(0.985 0 0);
+
+  --success: oklch(0.62 0.16 155);
+  --success-foreground: oklch(0.985 0 0);
+
+  --warning: oklch(0.75 0.16 75);
+  --warning-foreground: oklch(0.2 0.05 75);
+
+  --neon: oklch(0.55 0.15 245);
+
+  --border: oklch(0.92 0.01 250);
+  --input: oklch(0.92 0.01 250);
+  --ring: oklch(0.50 0.16 255);
+
+  --sidebar: oklch(0.98 0.01 250);
+  --sidebar-foreground: oklch(0.28 0.04 255);
+  --sidebar-accent: oklch(0.94 0.03 250);
+  --sidebar-accent-foreground: oklch(0.30 0.10 255);
+  --sidebar-border: oklch(0.92 0.01 250);
+
+  --shadow-soft: 0 1px 2px 0 color-mix(in oklab, var(--foreground) 6%, transparent);
+  --shadow-elevated:
+    0 8px 24px -12px color-mix(in oklab, var(--primary) 30%, transparent),
+    0 2px 6px -2px color-mix(in oklab, var(--foreground) 10%, transparent);
+  --shadow-glow:
+    0 0 0 1px color-mix(in oklab, var(--primary) 25%, transparent),
+    0 10px 40px -10px color-mix(in oklab, var(--primary) 45%, transparent);
+
+  --gradient-primary: linear-gradient(135deg, var(--primary) 0%, var(--neon) 100%);
+  --gradient-surface: linear-gradient(180deg, var(--card), color-mix(in oklab, var(--muted) 60%, transparent));
+
+  --grid-color: color-mix(in oklab, var(--primary) 8%, transparent);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    font-family: var(--font-sans);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    background-image:
+      radial-gradient(ellipse 80% 50% at 80% -10%, color-mix(in oklab, var(--primary) 14%, transparent), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 0% 100%, color-mix(in oklab, var(--primary-glow) 10%, transparent), transparent 60%),
+      linear-gradient(var(--grid-color) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+    background-size: auto, auto, 44px 44px, 44px 44px;
+    background-attachment: fixed;
+    background-position: 0 0, 0 0, 0 0, 0 0;
+    min-height: 100dvh;
+    font-feature-settings: "ss01", "cv11";
+    overflow: hidden;
+  }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--primary) 30%, transparent);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--primary) 50%, transparent);
+  }
+}
+
+@utility gradient-primary {
+  background-image: var(--gradient-primary);
+}
+
+@utility shadow-soft {
+  box-shadow: var(--shadow-soft);
+}
+
+@utility shadow-elevated {
+  box-shadow: var(--shadow-elevated);
+}
+
+@utility shadow-glow {
+  box-shadow: var(--shadow-glow);
+}
+
+@utility text-neon {
+  color: var(--neon);
+}
+
+@utility ring-neon {
+  --tw-ring-color: color-mix(in oklab, var(--neon) 50%, transparent);
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 40%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in oklab, var(--primary) 0%, transparent); }
+}
+
+@utility animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes page-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@utility animate-fade-in {
+  animation: fade-in 0.25s ease-out both;
+}
+
+@utility animate-page-in {
+  animation: page-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@layer base {
+  a, button {
+    transition: color 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  }
+}

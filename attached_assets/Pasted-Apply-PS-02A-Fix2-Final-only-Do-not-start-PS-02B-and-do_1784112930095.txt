@@ -1,0 +1,180 @@
+Apply PS-02A Fix2 Final only.
+
+Do not start PS-02B and do not modify the Games frontend.
+
+Read:
+
+- AGENTS.md
+- docs/PRODUCT_RULES.md
+- docs/CURRENT_PHASE.md
+- docs/MIGRATIONS.md
+
+Fix only the following verified remaining issues.
+
+## 1. Make platform changes transaction-safe
+
+The current platform-change flow performs:
+
+- read Game
+- check Account history
+- update Game
+
+without a transaction or row lock.
+
+Correct this so an Account cannot be created concurrently between the history check and platform update.
+
+For an actual platform change:
+
+- open a database transaction
+- load and lock the Game row using PostgreSQL row-level locking such as `FOR UPDATE`
+- return 404 when the Game does not exist or is soft deleted
+- check all Account history inside the same transaction
+- return 409 when any Account history exists
+- update the platform inside the same transaction
+
+A request containing the unchanged platform must remain allowed.
+
+Title-only and status-only updates must continue working normally.
+
+Do not redesign Accounts.
+
+## 2. Make hard deletion transaction-safe
+
+The current hard-delete flow performs the history check and delete separately.
+
+Correct it so the operation is atomic:
+
+- open a database transaction
+- lock the Game row
+- verify the Game exists and is not soft deleted
+- check all Account history in the transaction
+- return 409 when Account history exists
+- hard-delete only inside the same transaction
+
+As defensive protection, map PostgreSQL foreign-key violation code `23503` during Game deletion to controlled HTTP 409 rather than HTTP 500.
+
+Do not cascade-delete any related record.
+
+Order-history protection remains deferred because the current schema lacks a reliable Order-to-Game relation.
+
+## 3. Complete the title data contract
+
+After cleaning, Game titles must be between 1 and 120 characters.
+
+Update migration `0001_glossy_onslaught.sql` so populated legacy databases fail with a clear diagnostic when any cleaned legacy title exceeds 120 characters.
+
+Because migration 0001 has not been applied to the shared database and PS-02A is still active, correct it in place.
+
+Add database check constraints that prevent:
+
+- blank `title`
+- `title` longer than 120 characters
+- blank `title_normalized`
+- `title_normalized` longer than 120 characters
+
+Update:
+
+- Drizzle Games schema
+- migration snapshot
+- migration verification tests
+
+Add a populated-migration test proving an over-120-character legacy title fails clearly.
+
+## 4. Synchronize OpenAPI title validation
+
+The Backend rejects whitespace-only titles, but the generated OpenAPI/Zod contract currently accepts them.
+
+Update the OpenAPI CreateGameRequest and UpdateGameRequest title definitions so whitespace-only values are invalid.
+
+Regenerate:
+
+- lib/api-zod
+- lib/api-client-react
+
+Do not manually edit generated files.
+
+## 5. Clean delivery evidence
+
+Update `PS02A_DELIVERY.md` so it reflects the final implementation:
+
+- full unique index, not partial
+- current test counts
+- populated-database verification
+- Fix1 and Fix2 behavior
+- Order-history protection remains deferred
+
+Generate one final phase diff from the original PS-01 START_HEAD to the final PS-02A HEAD.
+
+Exclude export artifacts from the comparison to prevent self-referential diffs:
+
+git diff --binary START_HEAD..END_HEAD -- . ':(exclude)exports/**' > exports/ps02a-games-backend-final.diff
+
+The final diff must include the complete PS-02A changes:
+
+- schema
+- migration
+- API
+- OpenAPI
+- generated clients
+- tests
+- documentation
+
+Do not include stale or intermediate diff files in the delivery package.
+
+Create a complete clean source ZIP:
+
+exports/playsyncer-ps02a-final-full-source.zip
+
+The ZIP must include all tracked project source and documentation files.
+
+Exclude:
+
+- .git
+- node_modules
+- build outputs
+- caches
+- temporary PostgreSQL data
+- *.tsbuildinfo
+- attached prompt files
+- old ZIPs and intermediate diffs
+
+## Required validation
+
+Run:
+
+- pnpm run typecheck
+- pnpm --filter @workspace/db run test
+- pnpm --filter @workspace/api-server run test
+- pnpm --filter @workspace/db run db:check
+- pnpm --filter @workspace/api-server run build
+- OpenAPI/codegen verification
+- clean-database migration-chain verification
+- populated-database upgrade verification
+- populated over-length-title failure verification
+
+Confirm:
+
+- migration 0000 remains unchanged
+- shared Replit database remains untouched
+- no drizzle push was run or reintroduced
+- Games frontend remains unchanged
+- Account and Order schemas remain unchanged
+- Order-history deletion protection remains explicitly deferred
+
+Keep docs/CURRENT_PHASE.md as PS-02A ACTIVE.
+
+Provide:
+
+1. concise correction summary
+2. files changed
+3. exact test results
+4. transaction and locking behavior
+5. migration verification results
+6. START_HEAD and END_HEAD
+7. git status --short
+8. exports/ps02a-games-backend-final.diff
+9. exports/playsyncer-ps02a-final-full-source.zip
+10. ZIP and diff SHA-256 values
+
+Do not mark PS-02A completed.
+Do not make unrelated changes.

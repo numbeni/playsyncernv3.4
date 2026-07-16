@@ -1,0 +1,3 @@
+- [PlaySyncer DB phase](playsyncer-db-phase.md) — schema live, CRUD routes done, key constraints and patterns to follow.
+- [API client error handling](api-client-error-handling.md) — use structural `status`/`data` checks; do not import the internal `ApiError` class from `@workspace/api-client-react`.
+- [Drizzle-kit & node --test quirks](drizzle-kit-and-node-test-quirks.md) — `out` must be relative or `check` breaks; native test runner needs `.ts` imports + tsconfig flags; use `isNull` for soft-delete filters; verify populated migrations with `skipMigrations` + temp `.sql` files for psql.

@@ -1,0 +1,490 @@
+diff --git a/artifacts/api-server/package.json b/artifacts/api-server/package.json
+index 661930f..d4ffc30 100644
+--- a/artifacts/api-server/package.json
++++ b/artifacts/api-server/package.json
+@@ -26,8 +26,10 @@
+     "@types/cors": "^2.8.19",
+     "@types/express": "^5.0.6",
+     "@types/node": "catalog:",
++    "@types/pg": "^8.20.0",
+     "esbuild": "0.27.3",
+     "esbuild-plugin-pino": "^2.3.3",
++    "pg": "^8.22.0",
+     "pino-pretty": "^13.1.3",
+     "thread-stream": "3.1.0"
+   }
+diff --git a/artifacts/api-server/scripts/verify-games-migration-populated.ts b/artifacts/api-server/scripts/verify-games-migration-populated.ts
+index faa5cb3..e2ee128 100644
+--- a/artifacts/api-server/scripts/verify-games-migration-populated.ts
++++ b/artifacts/api-server/scripts/verify-games-migration-populated.ts
+@@ -146,9 +146,86 @@ async function verifyConflictFailure() {
+   }
+ }
+ 
++async function verifyOverLengthTitleFailure() {
++  const { databaseUrl, stop } = await startTestPg({ skipMigrations: true });
++  try {
++    runSqlFile(databaseUrl, path.join(MIGRATIONS_DIR, "0000_zippy_leech.sql"));
++
++    const longTitle = "A".repeat(121);
++    runSql(
++      databaseUrl,
++      `INSERT INTO "games" ("title", "platform", "status") VALUES
++        ('${longTitle}', 'PS5_ONLY', 'active');`,
++    );
++
++    let error: Error | undefined;
++    try {
++      runSqlFile(
++        databaseUrl,
++        path.join(MIGRATIONS_DIR, "0001_glossy_onslaught.sql"),
++      );
++    } catch (err) {
++      error = err as Error;
++    }
++
++    assert.ok(
++      error,
++      "migration should fail on a cleaned title longer than 120 characters",
++    );
++    const message = String(error);
++    assert.ok(
++      message.includes("Migration failed: one or more Game titles exceed 120 characters after cleaning"),
++      "error should clearly diagnose the over-length title problem: " + message,
++    );
++
++    // No silent truncation, rename, merge, or deletion: the original row still
++    // exists with its long title and the unique index / constraints that come
++    // after the DO block were not applied. (The column is added before the
++    // validation block, so the failure occurs before it is populated or made
++    // required; the row remains unchanged.)
++    const count = querySql(
++      databaseUrl,
++      `SELECT count(*) FROM "games" WHERE "title" = '${longTitle}';`,
++    );
++    assert.ok(count.trim() === "1", "original long-title row should still exist");
++
++    const titleNormalizedNotNull = querySql(
++      databaseUrl,
++      `SELECT count(*) FROM information_schema.columns WHERE table_name = 'games' AND column_name = 'title_normalized' AND is_nullable = 'NO';`,
++    );
++    assert.ok(
++      titleNormalizedNotNull.trim() === "0",
++      "title_normalized should not be made NOT NULL when migration fails",
++    );
++
++    const uniqueIndexExists = querySql(
++      databaseUrl,
++      `SELECT count(*) FROM pg_indexes WHERE tablename = 'games' AND indexname = 'games_title_normalized_uniq';`,
++    );
++    assert.ok(
++      uniqueIndexExists.trim() === "0",
++      "unique index should not be created when migration fails",
++    );
++
++    const titleCheckExists = querySql(
++      databaseUrl,
++      `SELECT count(*) FROM information_schema.table_constraints WHERE table_name = 'games' AND constraint_name = 'games_title_max_length';`,
++    );
++    assert.ok(
++      titleCheckExists.trim() === "0",
++      "title length check should not be added when migration fails",
++    );
++
++    console.log("Over-length title failure verification passed.");
++  } finally {
++    await stop();
++  }
++}
++
+ async function main() {
+   await verifySuccessfulUpgrade();
+   await verifyConflictFailure();
++  await verifyOverLengthTitleFailure();
+ }
+ 
+ main().catch((err) => {
+diff --git a/artifacts/api-server/src/routes/accounts.concurrency.test.ts b/artifacts/api-server/src/routes/accounts.concurrency.test.ts
+new file mode 100644
+index 0000000..6d2c079
+--- /dev/null
++++ b/artifacts/api-server/src/routes/accounts.concurrency.test.ts
+@@ -0,0 +1,179 @@
++import { describe, it, before, after } from "node:test";
++import assert from "node:assert";
++import pg from "pg";
++import { startTestPg } from "../lib/test-pg.ts";
++
++describe("Account creation / Game platform row locking", () => {
++  let databaseUrl: string;
++  let stopPg: () => Promise<void>;
++  let pool: pg.Pool;
++
++  before(async () => {
++    const { databaseUrl: dbUrl, stop: stopPgFn } = await startTestPg();
++    databaseUrl = dbUrl;
++    stopPg = stopPgFn;
++
++    // Connect directly to the disposable test database so the controlled
++    // locking test uses two real PostgreSQL connections.
++    pool = new pg.Pool({ connectionString: databaseUrl });
++  });
++
++  after(async () => {
++    await pool.end();
++    await stopPg();
++  });
++
++  it("serializes account creation and game platform change on the game row", async () => {
++    const clientA = await pool.connect();
++    const clientB = await pool.connect();
++
++    try {
++      // Seed a PS4_ONLY game.
++      const { rows: [game] } = await clientA.query(
++        `INSERT INTO "games" ("title", "title_normalized", "platform", "status")
++         VALUES ('Lock Test', 'lock test', 'PS4_ONLY', 'ACTIVE')
++         RETURNING "id"`,
++      );
++      const gameId = game.id;
++
++      // Client A starts a transaction and locks the Game row.
++      await clientA.query("BEGIN");
++      const { rows: [lockedGame] } = await clientA.query(
++        `SELECT "platform" FROM "games" WHERE "id" = $1 FOR UPDATE`,
++        [gameId],
++      );
++      assert.strictEqual(lockedGame.platform, "PS4_ONLY");
++
++      // Client B attempts to lock the same row; it will block until A commits.
++      const bLockPromise = clientB.query(
++        `SELECT "platform" FROM "games" WHERE "id" = $1 FOR UPDATE`,
++        [gameId],
++      );
++
++      // Client A creates an Account and Capacities using the locked platform.
++      const { rows: [account] } = await clientA.query(
++        `INSERT INTO "accounts" (
++          "game_id", "account_code", "account_number_prefix", "account_number_seq",
++          "display_number", "email", "email_normalized",
++          "playstation_password_encrypted", "email_password_encrypted"
++        ) VALUES ($1, 'ACC-000001', 'LOCK', 1, '#LOCK-001', 'lock@example.com', 'lock@example.com', 'x', 'x')
++        RETURNING "id"`,
++        [gameId],
++      );
++
++      // Capacities for PS4_ONLY.
++      await clientA.query(
++        `INSERT INTO "account_capacities" ("account_id", "capacity_kind", "instance_no", "display_label")
++         VALUES ($1, 'Z2_PS4', 0, 'Z2 PS4')`,
++        [account.id],
++      );
++
++      // Commit A. This releases the Game lock and allows B to proceed.
++      await clientA.query("COMMIT");
++
++      // B now holds the lock and can inspect the committed state.
++      await bLockPromise;
++      const { rows: [history] } = await clientB.query(
++        `SELECT count(*)::int AS "count" FROM "accounts" WHERE "game_id" = $1`,
++        [gameId],
++      );
++      assert.strictEqual(history.count, 1);
++
++      // B would now detect account history and block the platform change.
++      // Roll back to leave the database in the post-account-creation state.
++      await clientB.query("ROLLBACK");
++
++      // Verify the Account has the original PS4_ONLY capacity.
++      const { rows: caps } = await pool.query(
++        `SELECT "capacity_kind", "instance_no" FROM "account_capacities" WHERE "account_id" = $1`,
++        [account.id],
++      );
++      assert.deepStrictEqual(caps, [{ capacity_kind: "Z2_PS4", instance_no: 0 }]);
++
++      // Verify the Game platform is unchanged.
++      const { rows: [finalGame] } = await pool.query(
++        `SELECT "platform" FROM "games" WHERE "id" = $1`,
++        [gameId],
++      );
++      assert.strictEqual(finalGame.platform, "PS4_ONLY");
++    } finally {
++      clientA.release();
++      clientB.release();
++    }
++  });
++
++  it("allows both operations to succeed when the platform change wins first", async () => {
++    const clientA = await pool.connect();
++    const clientB = await pool.connect();
++
++    try {
++      // Seed a PS4_ONLY game.
++      const { rows: [game] } = await clientA.query(
++        `INSERT INTO "games" ("title", "title_normalized", "platform", "status")
++         VALUES ('Lock Test 2', 'lock test 2', 'PS4_ONLY', 'ACTIVE')
++         RETURNING "id"`,
++      );
++      const gameId = game.id;
++
++      // Client A updates the platform to PS5_ONLY under a lock.
++      await clientA.query("BEGIN");
++      await clientA.query(
++        `SELECT "platform" FROM "games" WHERE "id" = $1 FOR UPDATE`,
++        [gameId],
++      );
++      await clientA.query(
++        `UPDATE "games" SET "platform" = 'PS5_ONLY', "updated_at" = now() WHERE "id" = $1`,
++        [gameId],
++      );
++
++      // Client B attempts to create an Account; it will block until A commits.
++      const bAccountPromise = (async () => {
++        await clientB.query("BEGIN");
++        const { rows: [lockedGame] } = await clientB.query(
++          `SELECT "platform" FROM "games" WHERE "id" = $1 FOR UPDATE`,
++          [gameId],
++        );
++        const { rows: [account] } = await clientB.query(
++          `INSERT INTO "accounts" (
++            "game_id", "account_code", "account_number_prefix", "account_number_seq",
++            "display_number", "email", "email_normalized",
++            "playstation_password_encrypted", "email_password_encrypted"
++          ) VALUES ($1, 'ACC-000002', 'LOCK', 1, '#LOCK-001', 'lock2@example.com', 'lock2@example.com', 'x', 'x')
++          RETURNING "id"`,
++          [gameId],
++        );
++        await clientB.query(
++          `INSERT INTO "account_capacities" ("account_id", "capacity_kind", "instance_no", "display_label")
++           VALUES ($1, 'Z2_PS5', 1, 'Z2 PS5 #1'), ($1, 'Z2_PS5', 2, 'Z2 PS5 #2'), ($1, 'Z3_PS5', 0, 'Z3 PS5')`,
++          [account.id],
++        );
++        await clientB.query("COMMIT");
++        return account.id;
++      })();
++
++      await clientA.query("COMMIT");
++      const accountId = await bAccountPromise;
++
++      // Verify the Account has the new PS5_ONLY capacities.
++      const { rows: caps } = await pool.query(
++        `SELECT "capacity_kind", "instance_no" FROM "account_capacities" WHERE "account_id" = $1 ORDER BY "capacity_kind", "instance_no"`,
++        [accountId],
++      );
++      assert.deepStrictEqual(caps, [
++        { capacity_kind: "Z2_PS5", instance_no: 1 },
++        { capacity_kind: "Z2_PS5", instance_no: 2 },
++        { capacity_kind: "Z3_PS5", instance_no: 0 },
++      ]);
++
++      // Verify the Game platform is now PS5_ONLY.
++      const { rows: [finalGame] } = await pool.query(
++        `SELECT "platform" FROM "games" WHERE "id" = $1`,
++        [gameId],
++      );
++      assert.strictEqual(finalGame.platform, "PS5_ONLY");
++    } finally {
++      clientA.release();
++      clientB.release();
++    }
++  });
++});
+diff --git a/artifacts/api-server/src/routes/accounts.ts b/artifacts/api-server/src/routes/accounts.ts
+index 34dec63..790cfb6 100644
+--- a/artifacts/api-server/src/routes/accounts.ts
++++ b/artifacts/api-server/src/routes/accounts.ts
+@@ -18,6 +18,7 @@ import { logger } from "../lib/logger";
+ import { p } from "../lib/req-param";
+ import { toSafeAccount } from "../lib/dto";
+ import { requireUuidParam } from "../lib/validate-uuid";
++import { HttpError } from "../middlewares/error-handler";
+ 
+ const router: IRouter = Router();
+ 
+@@ -50,26 +51,6 @@ const UpdateAccountBody = z.object({
+   status: z.enum(["active", "disabled"]).optional(),
+ });
+ 
+-// ── Helpers ──────────────────────────────────────────────────────────────────
+-
+-async function nextAccountCode(): Promise<string> {
+-  // TODO: replace with a PostgreSQL sequence to eliminate the race window under load.
+-  const [row] = await db
+-    .select({ max: drizzleMax(accountsTable.accountCode) })
+-    .from(accountsTable);
+-  const n = row?.max ? parseInt(row.max.replace("ACC-", ""), 10) + 1 : 1;
+-  return `ACC-${String(n).padStart(6, "0")}`;
+-}
+-
+-async function nextSeqForGame(gameId: string): Promise<number> {
+-  // TODO: replace with a per-game PostgreSQL sequence under load.
+-  const [row] = await db
+-    .select({ max: drizzleMax(accountsTable.accountNumberSeq) })
+-    .from(accountsTable)
+-    .where(eq(accountsTable.gameId, gameId));
+-  return (row?.max ?? 0) + 1;
+-}
+-
+ // ── Routes ───────────────────────────────────────────────────────────────────
+ 
+ /** GET /games/:gameId/accounts — list active accounts for a game */
+@@ -135,31 +116,45 @@ router.post("/games/:gameId/accounts", async (req: Request, res: Response) => {
+ 
+   const gameId = p(req.params["gameId"]);
+ 
+-  const [game] = await db
+-    .select()
+-    .from(gamesTable)
+-    .where(eq(gamesTable.id, gameId))
+-    .limit(1);
+-
+-  if (!game || game.deletedAt) {
+-    res.status(404).json({ error: "Game not found" });
+-    return;
+-  }
+-
+   try {
+-    const [accountCode, seq] = await Promise.all([
+-      nextAccountCode(),
+-      nextSeqForGame(gameId),
+-    ]);
++    // Open the transaction before reading the Game, then lock the Game row and
++    // create the Account + Capacities using the platform from that locked row.
++    // This serializes with the platform-change guard in PATCH /games/:id so the
++    // Account is never created with Capacity definitions from a stale platform.
++    const { account, capacities } = await db.transaction(async (tx) => {
++      const [game] = await tx
++        .select()
++        .from(gamesTable)
++        .where(eq(gamesTable.id, gameId))
++        .for("update")
++        .limit(1);
+ 
+-    const prefix = normalizeAccountNumberPrefix(
+-      parsed.data.accountNumberPrefix ?? "",
+-      game.title,
+-    );
+-    const displayNumber = buildDisplayNumber(prefix, seq);
++      if (!game || game.deletedAt) {
++        throw new HttpError(404, "Game not found");
++      }
++
++      // Generate the next account code and per-game sequence inside the same
++      // transaction so the whole operation is serialized under the Game lock.
++      const [accountCodeRow] = await tx
++        .select({ max: drizzleMax(accountsTable.accountCode) })
++        .from(accountsTable);
++      const n = accountCodeRow?.max
++        ? parseInt(accountCodeRow.max.replace("ACC-", ""), 10) + 1
++        : 1;
++      const accountCode = `ACC-${String(n).padStart(6, "0")}`;
++
++      const [seqRow] = await tx
++        .select({ max: drizzleMax(accountsTable.accountNumberSeq) })
++        .from(accountsTable)
++        .where(eq(accountsTable.gameId, gameId));
++      const seq = (seqRow?.max ?? 0) + 1;
++
++      const prefix = normalizeAccountNumberPrefix(
++        parsed.data.accountNumberPrefix ?? "",
++        game.title,
++      );
++      const displayNumber = buildDisplayNumber(prefix, seq);
+ 
+-    // All inserts in a single transaction — partial failures leave no orphans.
+-    const { account, capacities } = await db.transaction(async (tx) => {
+       const [account] = await tx
+         .insert(accountsTable)
+         .values({
+@@ -205,6 +200,10 @@ router.post("/games/:gameId/accounts", async (req: Request, res: Response) => {
+ 
+     res.status(201).json({ account: toSafeAccount(account), capacities });
+   } catch (err: unknown) {
++    if (err instanceof HttpError) {
++      res.status(err.statusCode).json({ error: err.message });
++      return;
++    }
+     if (
+       typeof err === "object" && err !== null && "code" in err &&
+       (err as { code: string }).code === "23505"
+diff --git a/artifacts/api-server/src/routes/games.test.ts b/artifacts/api-server/src/routes/games.test.ts
+index 3951066..c173fea 100644
+--- a/artifacts/api-server/src/routes/games.test.ts
++++ b/artifacts/api-server/src/routes/games.test.ts
+@@ -322,4 +322,53 @@ describe("Games API", () => {
+     assert.ok(titles.includes("List Inactive"));
+     assert.ok(titles.includes("List Active"));
+   });
++
++  it("never creates an account with capacities from a stale platform under concurrency", async () => {
++    // The lock winner is nondeterministic, so repeat a few times to exercise
++    // both orderings. The invariant is: after both operations complete, the
++    // account capacities must match the final committed game platform.
++    for (let i = 0; i < 5; i++) {
++      const { data: createData } = await createGame(
++        `Concurrency Race ${i}`,
++        "PS4_ONLY",
++      );
++      const game = assertGame(createData);
++
++      const accountPromise = createAccountForGame(
++        baseUrl,
++        game.id,
++        `concurrency-${i}@example.com`,
++      );
++      const updatePromise = updateGame(game.id, { platform: "PS5_ONLY" });
++
++      const [accountResult, updateResult] = await Promise.all([
++        accountPromise,
++        updatePromise,
++      ]);
++
++      const getRes = await fetch(`${baseUrl}/games/${game.id}`);
++      const finalGame = (await getRes.json()) as GameResponse;
++
++      const capsRes = await fetch(`${baseUrl}/accounts/${accountResult.account.id}`);
++      const capsData = (await capsRes.json()) as {
++        capacities: { capacityKind: string }[];
++      };
++      const kinds = new Set(capsData.capacities.map((c) => c.capacityKind));
++
++      if (updateResult.res.status === 200) {
++        // Game update won the lock. Account creation must have observed the new
++        // PS5_ONLY platform and created PS5 capacities.
++        assert.strictEqual(finalGame.game.platform, "PS5_ONLY");
++        assert.ok(kinds.has("Z2_PS5"), "expected PS5 capacities");
++        assert.ok(!kinds.has("Z2_PS4"), "did not expect PS4 capacities");
++      } else {
++        // Account creation won the lock. Game platform change must have been
++        // blocked by the account history, leaving PS4 capacities in place.
++        assert.strictEqual(updateResult.res.status, 409);
++        assert.strictEqual(finalGame.game.platform, "PS4_ONLY");
++        assert.ok(kinds.has("Z2_PS4"), "expected PS4 capacities");
++        assert.ok(!kinds.has("Z2_PS5"), "did not expect PS5 capacities");
++      }
++    }
++  });
+ });
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 6196e2c..273389c 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -206,12 +206,18 @@ importers:
+       '@types/node':
+         specifier: 'catalog:'
+         version: 25.9.4
++      '@types/pg':
++        specifier: ^8.20.0
++        version: 8.20.0
+       esbuild:
+         specifier: 0.27.3
+         version: 0.27.3
+       esbuild-plugin-pino:
+         specifier: ^2.3.3
+         version: 2.3.3(esbuild@0.27.3)(pino-pretty@13.1.3)(pino@9.14.0)(thread-stream@3.1.0)
++      pg:
++        specifier: ^8.22.0
++        version: 8.22.0
+       pino-pretty:
+         specifier: ^13.1.3
+         version: 13.1.3

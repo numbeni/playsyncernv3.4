@@ -1,0 +1,169 @@
+You are the Senior React/TypeScript Reviewer, API Integration Engineer, and Release-Safety Engineer for PlaySyncer.
+
+Complete only:
+
+PS-02B — Stage D: Cleanup, Regression Verification, and Phase Closure
+
+Current input package SHA-256:
+
+4f689f8ff60e331a9bc8234c08d8ff16a8e0c3c92716dda1b18a476269ab425f
+
+Do not start the next product phase.
+Do not implement Accounts, Capacities, Orders, Game Import, Authentication, RBAC, or new features.
+
+The purpose of Stage D is to correct the remaining technical issue, remove obsolete Games-only code, perform final regression verification, and close PS-02B with evidence.
+
+## 1. Fix the remaining Promise issue
+
+Inspect the mutation Promise locks in:
+
+`artifacts/playsyncer/src/hooks/useGames.tsx`
+
+The current pattern uses an unmanaged Promise returned by `.finally()` and may produce an unhandled rejection when a mutation fails.
+
+Correct the implementation so:
+
+- lock cleanup is guaranteed
+- rejected mutations remain handled by the caller
+- no detached or unmanaged rejected Promise is created
+- Create, Edit, Status, and Delete still share or block concurrent operations correctly
+- failed mutations keep the modal or dialog open
+- successful mutations wait for API completion and Games-list synchronization
+
+Prefer a controlled `try/finally` or another explicit Promise lifecycle.
+
+Do not silence errors globally.
+
+## 2. Games-only cleanup
+
+Inspect the complete Games frontend runtime path.
+
+Remove only obsolete Games-specific code that is no longer used, including where applicable:
+
+- old local-only Games mutation code
+- unused Games mock imports
+- unused Games adapters
+- unused handlers
+- dead status or cover compatibility code
+- obsolete Stage B no-op logic
+- stale imports and types
+
+Do not delete Account or Capacity components merely because they are not active in PS-02B.
+
+Do not connect legacy Account mock data to backend Games.
+
+The final runtime authority for Games must remain the real API.
+
+## 3. UI and behavior regression review
+
+Verify that the following still work through the browser UI:
+
+1. Games load from the backend.
+2. Refresh does not restore mock Games.
+3. Add Game uses the API.
+4. Duplicate normalized titles show a Persian error and keep the form open.
+5. Edit title, cover URL, cleared cover URL, and Platform persist.
+6. ACTIVE and INACTIVE changes persist after refresh.
+7. Delete uses the API.
+8. Deleted Games do not return after refresh.
+9. Rapid clicks send only one logical mutation.
+10. Modal and confirmation dialogs cannot close while pending.
+11. Failed mutations display safe Persian errors.
+12. SmartSearch reflects Create, Edit, and Delete.
+13. Game Detail displays real Game metadata.
+14. Account Workspace remains in the explicit pending-integration state.
+15. Unsupported Account, Capacity, or Assignment statistics are not fabricated.
+16. Browser console contains no new errors or unhandled Promise rejections.
+
+Use one clearly synthetic Game if a final CRUD verification record is required.
+
+Delete only that synthetic Game after verification.
+
+Do not modify or delete unknown records.
+
+## 4. Database restrictions
+
+Do not run:
+
+- migrations
+- drizzle-kit push
+- direct SQL
+- schema changes
+- rollback scripts
+
+The database schema is already available for this Stage.
+
+All allowed test writes must go through the existing Games API.
+
+## 5. Automated checks
+
+Run only existing scripts:
+
+pnpm run typecheck
+
+PORT=3000 BASE_PATH=/ pnpm --filter @workspace/playsyncer run build
+
+pnpm --filter @workspace/api-server run test
+
+Do not add test dependencies.
+
+Do not claim lint or frontend automated tests passed unless matching scripts exist and were executed.
+
+## 6. Documentation cleanup and phase closure
+
+Review:
+
+- `docs/CURRENT_PHASE.md`
+- `docs/DECISION_LOG.md`
+
+Remove contradictory or obsolete Stage A/B/C working-status text from the current-status section while preserving historical entries in the decision log.
+
+After all validation succeeds, update `docs/CURRENT_PHASE.md` to:
+
+Active Phase:
+PS-02B — Games Frontend API Integration and Mock Authority Removal
+
+Status:
+PS-02B_COMPLETED
+
+Record clearly that:
+
+- Games use the real backend API
+- Create/Edit/Status/Delete persist through PostgreSQL
+- Games mock data is no longer runtime authority
+- Account and Capacity integration remain outside PS-02B
+- SmartSearch currently searches only Games
+- no database schema change occurred in Stage D
+- the next phase requires Command Center approval
+
+Append the final Stage D result to `docs/DECISION_LOG.md`.
+
+Do not erase previous phase history.
+
+## Required final report
+
+Return:
+
+1. Exact files changed
+2. Concise diff summary
+3. Promise-lock correction
+4. Dead-code and mock cleanup
+5. Final CRUD regression evidence
+6. Error and rapid-click evidence
+7. Typecheck output
+8. Build output
+9. Backend test output
+10. Browser screenshots
+11. Browser console result
+12. Synthetic test record created and deleted, if any
+13. Database impact statement
+14. Remaining known limitations
+15. Rollback instructions
+16. Final exported ZIP filename
+17. Final exported ZIP SHA-256
+18. Confirmation that PS-02B was closed
+19. Confirmation that no next phase was started
+
+Do not claim production readiness or overall project completion.
+
+Stop after Stage D and PS-02B closure.

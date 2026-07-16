@@ -1,0 +1,203 @@
+PS-02B Stage B Fix1 — Runtime Authority Separation and Misleading UI Correction
+
+Stage B is not accepted.
+
+Do not start Stage C.
+Do not implement Create, Edit, Status Change or Delete API mutations.
+
+Before responding, inspect the current changed source directly.
+
+## Critical database instruction
+
+You previously ran:
+
+pnpm --filter @workspace/db run db:migrate
+
+against the Replit shared database, despite the explicit PS-02B prohibition against modifying the shared database.
+
+Do not run any further migration, schema, push, rollback, delete or cleanup command.
+
+Do not attempt to reverse the migration.
+
+There is no generated down migration in this repository. Correct the previous rollback statement.
+
+Provide read-only evidence showing:
+
+- redacted database host/database identity without credentials
+- which migrations are recorded as applied
+- the two seeded test Game records
+- whether either test Game has Account or other dependent records
+- a proposed cleanup procedure, but do not execute it without explicit approval
+
+## Fix 1 — Remove the hidden hybrid Game model
+
+The API Game model must not contain mock Accounts.
+
+Remove:
+
+- accountsByGameId
+- merging mock Accounts into API Games
+- `accounts` from the API/frontend Game type
+- any fabricated `accounts: []` value
+
+Do not match backend Games to legacy mock Games by:
+
+- UUID
+- title
+- normalized title
+- array position
+- manual mapping
+
+The Games runtime authority must be the API only.
+
+Legacy Account mock state may remain in its existing source files for a later phase, but it must not be attached to backend Game records or exposed as if it belongs to them.
+
+## Fix 2 — Use backend accountCount correctly
+
+The generated API Game contract includes:
+
+accountCount
+
+Add and use this field in the frontend Game view model.
+
+On GamesPage and GameCard:
+
+- display the real `accountCount`
+- do not calculate Account count from mock/local Accounts
+- hide unsupported Active Account, Capacity and Assignment statistics
+- do not display zero placeholders for data the backend did not provide
+
+At the page overview level, only display statistics backed by the API, such as:
+
+- total Games
+- total Accounts calculated from the sum of `accountCount`
+
+Do not invent or derive Capacity or Assignment statistics.
+
+## Fix 3 — Controlled Account Workspace boundary
+
+GameDetailPage must display real backend Game metadata.
+
+However, Accounts and Capacities are not integrated in PS-02B.
+
+Replace the Account list and empty-account message with a controlled temporary state such as:
+
+«مدیریت اکانت‌های این بازی هنوز به Backend متصل نشده است و در فاز Account Integration فعال خواهد شد.»
+
+Do not say:
+
+«هنوز اکانتی برای این بازی اضافه نشده است»
+
+because the frontend has not queried Accounts and cannot prove that the Game has zero Accounts.
+
+During Stage B:
+
+- hide the Add Account button
+- do not mount AccountFormModal
+- do not mount Account edit/delete controls
+- do not call local Account or Capacity mutations for backend Game UUIDs
+- optionally display the backend `accountCount` as informational metadata only
+
+Do not delete or broadly refactor Account components.
+
+## Fix 4 — Disable all Games write UX
+
+Stage B is read-only.
+
+Hide or genuinely disable:
+
+- Add Game
+- Edit Game
+- Activate/Deactivate Game
+- Delete Game
+
+Do not open a form or confirmation modal whose action cannot execute.
+
+Remove Stage B no-op handlers and console warnings from the runtime path.
+
+Write controls will return in Stage C using real API mutations.
+
+## Fix 5 — SmartSearch accuracy
+
+SmartSearch must search only live backend Games in Stage B.
+
+Update its placeholder and UI so it does not claim support for:
+
+- Account email
+- password
+- backup code
+- customer phone
+- order ID
+
+Use a truthful placeholder such as:
+
+«جستجو در بازی‌ها بر اساس عنوان یا شناسه…»
+
+Do not return Account or Customer mock results.
+
+## Fix 6 — Documentation status
+
+Update:
+
+docs/CURRENT_PHASE.md
+
+Keep the active phase as PS-02B, but set status to:
+
+STAGE_B_FIX1_READY_FOR_REVIEW
+
+Append a short factual entry to:
+
+docs/DECISION_LOG.md
+
+Record that:
+
+- Stage B initially applied the existing migration to the shared Replit database without Command Center approval
+- no automatic rollback was performed
+- further database actions are blocked pending review
+- Stage B Fix1 separates API Games from legacy Account mock state
+
+Do not hide or rewrite the previous history.
+
+## Validation
+
+Run only existing scripts:
+
+PORT=3000 BASE_PATH=/ pnpm --filter @workspace/playsyncer run typecheck
+PORT=3000 BASE_PATH=/ pnpm --filter @workspace/playsyncer run build
+
+Provide manual evidence that:
+
+1. Games still load from GET /api/games.
+2. Refresh does not restore mock Games.
+3. GameCard shows real `accountCount`.
+4. Unsupported statistics are not shown as zero.
+5. GameDetail shows real Game metadata.
+6. GameDetail clearly says Account integration is pending.
+7. Add Account is unavailable.
+8. Add/Edit/Delete/Status Game actions are unavailable.
+9. SmartSearch searches only backend Games.
+10. No legacy mock Game appears.
+11. Browser console has no new errors.
+
+## Required report
+
+Return:
+
+1. exact files changed
+2. concise diff summary
+3. runtime changes
+4. documentation changes
+5. typecheck output
+6. build output
+7. browser screenshots
+8. database read-only evidence
+9. seeded test-data cleanup proposal
+10. known limitations
+11. accurate rollback statement
+
+Stop after Fix1.
+
+Do not start Stage C.
+Do not run further database writes.
+
+قبل از پاسخ دادن عجله نکن. اول مسئله، سورس، فایل‌ها، وابستگی‌ها، ریسک‌ها و اثرات جانبی را عمیق تحلیل کن. اگر شواهد کافی از سورس، لاگ، diff یا تست نداری، ادعای قطعی نکن. خروجی سطحی، حدسی، تبلیغاتی یا سریع نده. هر تغییر باید کوچک، قابل تست و قابل rollback باشد. اگر چیزی خارج از scope است فقط گزارش بده و بدون تأیید من اجرا نکن. قبل از ارائه راه‌حل، تفاوت Fact، Assumption، Risk و Recommendation را مشخص کن.

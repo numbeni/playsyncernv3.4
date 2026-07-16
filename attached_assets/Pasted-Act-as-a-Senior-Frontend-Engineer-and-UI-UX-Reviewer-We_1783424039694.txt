@@ -1,0 +1,132 @@
+Act as a Senior Frontend Engineer and UI/UX Reviewer.
+
+We are working on PlaySyncer.
+
+Current task:
+Phase B — Smart Search & Account Workspace UI Polish
+
+Assumption:
+Phase A is already completed:
+- PS4_ONLY exists
+- Account platform field is removed
+- Account capacities are generated from parent game platform
+- Account form required fields are enforced
+
+Important limits:
+Do NOT redesign the whole app.
+Do NOT add backend, database, auth, WooCommerce, orders, push delivery, or localStorage.
+Do NOT change platform/account form logic unless required to fix type errors.
+Keep all changes frontend/mock-state only.
+
+Inspect first:
+- src/components/SmartSearch.tsx
+- src/pages/GamesPage.tsx
+- src/pages/GameDetailPage.tsx
+- src/components/GameCard.tsx
+- src/components/AccountCard.tsx
+- src/components/AccountDetailsModal.tsx
+- src/hooks/useGames.tsx
+- src/mocks/playSyncerMockData.ts
+
+Required changes:
+
+1. Move SmartSearch to the highest practical position in the Games section.
+
+When user is on GamesPage:
+- SmartSearch must appear at the top of the section.
+- Other content must appear below it.
+
+When user enters GameDetailPage / Account Workspace:
+- SmartSearch must appear in the same top position.
+- Other page content must appear below it.
+
+Do not create duplicate/conflicting search bars.
+
+2. SmartSearch must search all currently stored frontend/mock data:
+
+Game fields:
+- game title
+- platform
+- status
+
+Account fields:
+- account number
+- email
+- PlayStation Password
+- Email Password
+- Online ID
+- Birth Date
+- Family Management Email
+- every single 2-step verification / backup code
+- account status
+
+Capacity/customer fields if currently present:
+- customer phone
+- order ID
+- visible customer/capacity assignment data
+
+Each backup code must be searchable individually.
+
+3. Search result priority must be:
+
+1. Games
+2. Accounts
+3. Customers / capacity-related matches
+
+Currently accounts/customers may appear before games. Fix this.
+
+Result UI should clearly show result type:
+- بازی
+- اکانت
+- مشتری / ظرفیت
+
+For sensitive matches, do not expose the matched sensitive value directly.
+Use labels like:
+- Matched by PlayStation Password
+- Matched by 2-step verification code
+
+4. In GamesPage, clicking the game cover/image should navigate to that game account workspace.
+Keep the existing “اکانت‌ها” action too.
+
+5. Replace visible “slot / اسلات” wording with “ظرفیت” where still visible in UI.
+Do not rename internal files/types unless necessary.
+
+6. In AccountCard capacity/status section:
+- Do not mask customer phone numbers.
+- Show full phone numbers.
+- Make phone numbers copyable if possible.
+
+7. In main expanded AccountCard:
+- Remove Online ID from the first-view/main info area.
+- Online ID should only appear inside “مشاهده اطلاعات اکانت”.
+- Use the freed space to make the 2-step verification codes area larger vertically.
+- Show all 2-step verification codes completely.
+- Make the codes copyable.
+
+8. Update visible labels in AccountCard:
+- “ایمیل” → “Email”
+- “رمز عبور” → “PlayStation Password”
+- “کدهای پشتیبان” → “2-step verification codes”
+
+9. In AccountDetailsModal:
+- Replace “Password” or “رمز عبور” label with “PlayStation Password”.
+
+10. Quality checks:
+Run:
+- pnpm run typecheck
+- pnpm run build
+
+If lint exists:
+- pnpm run lint
+
+Fix TypeScript/build errors.
+
+Final response must include:
+- changed files
+- exact UI/search fixes made
+- confirmation that SmartSearch is at the top of GamesPage and GameDetailPage
+- confirmation that SmartSearch searches all current stored data
+- confirmation that result priority is Games first, Accounts second, Customers/Capacity third
+- confirmation that no backend/database/auth/WooCommerce/orders/push delivery/localStorage was added
+- test results
+- remaining risks or follow-up notes

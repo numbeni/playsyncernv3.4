@@ -1,0 +1,70 @@
+Act as a Senior Backend Engineer and PostgreSQL Migration Engineer for PlaySyncer.
+
+Work on the current PlaySyncer v3.1 source.
+
+This phase is PS-01 — Backend Foundation and Migration Discipline.
+
+First inspect the existing project, then implement the following controlled changes:
+
+1. Remove any automatic `drizzle-kit push` execution from post-merge or startup workflows.
+
+2. Add a safe versioned Drizzle migration workflow with clear scripts for:
+- generating migrations
+- applying migrations
+- checking migration status
+
+3. Add:
+- GET /api/healthz for process health
+- GET /api/readyz for PostgreSQL readiness
+
+4. Add centralized API error handling.
+
+5. Add safe validation for UUID route parameters so invalid UUIDs return HTTP 400 instead of database errors.
+
+6. Add explicit JSON request size limits and controlled malformed JSON errors.
+
+7. Add reusable cryptography utilities using Node.js built-in crypto:
+- authenticated encryption
+- decryption
+- deterministic lookup hash
+- unit tests
+
+Do not connect these cryptography utilities to the existing account tables yet.
+
+8. Update OpenAPI and regenerate the related Zod and React API clients only for health and readiness endpoints.
+
+9. Preserve all existing Games, Accounts and Orders behavior.
+
+Do not:
+- redesign business schemas
+- change game platforms
+- change capacity templates
+- change account statuses
+- modify identifier generation
+- redesign orders
+- implement authentication or permissions
+- perform destructive database changes
+- run drizzle-kit push --force
+- modify a shared or live database
+
+Use a clean disposable PostgreSQL database for migration verification.
+
+After implementation run all available:
+- typecheck
+- tests
+- migration verification
+- health/readiness checks
+- OpenAPI/code generation checks
+
+At the end provide:
+
+1. Files changed
+2. Runtime changes
+3. Documentation-only changes
+4. Commands and test results
+5. Whether any existing database was modified
+6. Known risks
+7. Rollback instructions
+8. A ZIP of the complete updated project
+
+Do not claim production readiness.

@@ -1,0 +1,126 @@
+You are the Senior Release Engineer and Repository Reviewer for PlaySyncer.
+
+Complete only:
+
+PS-02B — Final Packaging Correction and Closure
+
+Do not start the next phase.
+Do not change Games runtime behavior.
+Do not run migrations, SQL, database writes, or CRUD tests.
+
+Current reviewed workspace package SHA-256:
+
+07353a8a6ac37774c521c2777b93a7c7d9a3de2781e05ed808481fd52ef34b6c
+
+The PS-02B runtime implementation is accepted. Only the final package and preserved legacy fixtures require correction.
+
+## Required corrections
+
+1. Preserve the old Account, Capacity, and Customer mock data as a non-runtime fixture.
+
+Recover the exact pre-Stage-D `playSyncerMockData.ts` content from Git history or the previous available source package.
+
+Store it outside the application runtime path, for example:
+
+fixtures/legacy/playSyncerMockData.ts
+
+Add a short README in the same directory stating:
+
+- this is a non-runtime historical fixture
+- it is not a Games data authority
+- it must not be imported by the frontend
+- it is preserved only for the future Account/Capacity integration phase
+
+Do not restore it under `artifacts/playsyncer/src/mocks`.
+Do not connect it to backend Games.
+Do not fabricate or rewrite missing fixture data. If the exact previous file cannot be recovered, stop and report that specific blocker.
+
+2. Correct the final documentation.
+
+Verify that `docs/CURRENT_PHASE.md` clearly contains:
+
+Active Phase:
+PS-02B — Games Frontend API Integration and Mock Authority Removal
+
+Status:
+PS-02B_COMPLETED
+
+It must clearly state:
+
+- Games use the real backend API
+- Create, Edit, Status, and Delete persist through PostgreSQL
+- Games mock data is no longer runtime authority
+- Account and Capacity integration remain outside PS-02B
+- legacy Account/Capacity mock data is preserved only as a non-runtime fixture
+- SmartSearch currently searches only Games
+- the next phase requires Command Center approval
+
+Append a factual packaging-correction entry to `docs/DECISION_LOG.md`.
+
+Do not remove previous history.
+
+3. Remove the stale package:
+
+playsyncer-ps02b-closed.zip
+
+That package contains outdated documentation and must not remain inside the final source package.
+
+4. Verify runtime separation.
+
+Confirm that no runtime file under:
+
+artifacts/playsyncer/src
+
+imports the legacy fixture.
+
+Confirm that Games still use only the real API.
+
+Do not modify runtime source unless an accidental fixture import is found.
+
+5. Run only these checks:
+
+pnpm run typecheck
+
+PORT=3000 BASE_PATH=/ pnpm --filter @workspace/playsyncer run build
+
+No backend or database retesting is required unless runtime source changes.
+
+6. Create a new final ZIP after all corrections.
+
+Name it:
+
+playsyncer-ps02b-final.zip
+
+Create it outside the source directory or explicitly exclude the ZIP itself, `.git`, `node_modules`, build output, and previous ZIP files.
+
+After export, verify the ZIP contents directly and confirm:
+
+- `docs/CURRENT_PHASE.md` contains `PS-02B_COMPLETED`
+- the final Decision Log entry exists
+- `fixtures/legacy/playSyncerMockData.ts` exists
+- the fixture README exists
+- the stale `playsyncer-ps02b-closed.zip` is absent
+- no runtime import references the fixture
+
+Calculate SHA-256 only after the final ZIP is complete.
+
+Do not insert the final ZIP SHA into a file inside the ZIP because that would change the archive hash. Report it separately.
+
+## Final report
+
+Return only:
+
+1. Exact files added, changed, and removed
+2. Fixture recovery source
+3. Runtime-import verification
+4. Typecheck result
+5. Build result
+6. Final ZIP filename
+7. Final ZIP SHA-256
+8. Verification of final ZIP contents
+9. Confirmation that PS-02B is closed
+10. Confirmation that no next phase was started
+
+Do not claim overall project completion or production readiness.
+
+Stop after producing the corrected final PS-02B package.

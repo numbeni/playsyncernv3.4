@@ -1,0 +1,137 @@
+
+Act as a Senior Frontend Architect, Product UI Reviewer, and Release-Safety Reviewer.
+
+We are working on PlaySyncer.
+
+Current status:
+Phase 0.5 — Foundation Alignment is already done.
+The current UI foundation is accepted.
+We decided to defer advanced Games Overview Alignment because overview metrics should be finalized later after account, slot, and assignment data becomes richer.
+
+Your task is now:
+
+Phase 1 — Games Management MVP
+
+Main goal:
+Make the Games page operational at frontend/mock level by adding basic game management actions.
+
+Important limits:
+Do NOT redesign the whole UI.
+Do NOT change the current visual direction.
+Do NOT add backend.
+Do NOT add database.
+Do NOT add authentication.
+Do NOT add WooCommerce.
+Do NOT add orders queue.
+Do NOT add real permissions.
+Do NOT implement account CRUD yet.
+Do NOT implement slot assignment yet.
+Do NOT overbuild.
+
+Keep the current GamesPage and GameCard visual style.
+
+Files to inspect first:
+- src/pages/GamesPage.tsx
+- src/components/GameCard.tsx
+- src/domain/games/types.ts
+- src/domain/games/platform.ts
+- src/mocks/playSyncerMockData.ts
+- src/domain/permissions/permissions.ts
+
+Required work:
+
+1. Add frontend-only game state management.
+
+GamesPage should load initial games from mock data, but manage them in component state for now.
+
+2. Add “افزودن بازی” action.
+
+Create an Add Game modal or dialog.
+
+Required fields:
+- Game title
+- Game image URL
+- Platform:
+  - PS5_ONLY
+  - PS4_AND_PS5
+- Status:
+  - active
+  - inactive
+
+Validation:
+- title is required
+- platform is required
+- image URL can be optional for now, but if empty use a safe placeholder image
+
+3. Add Edit Game action.
+
+Each GameCard should expose an edit action.
+Editing should allow:
+- title
+- image URL
+- platform
+- status
+
+Do not break navigation to GameDetailPage.
+
+4. Add Disable/Delete behavior safely.
+
+Do NOT hard-delete immediately without confirmation.
+
+Preferred:
+- Add a confirmation dialog.
+- Use “غیرفعال‌سازی” as the primary safe action.
+- If you add delete, it must require confirmation.
+
+5. Update GameCard UI minimally.
+
+GameCard should show:
+- current status badge: فعال / غیرفعال
+- edit action
+- disable/delete action
+
+Keep the card clean and compact.
+
+6. Respect platform rules.
+
+- PS4_ONLY must not exist.
+- Allowed platforms are only:
+  - PS5_ONLY
+  - PS4_AND_PS5
+
+7. Use permission scaffold but do not enforce real permissions.
+
+You may wrap actions with current can() checks, but can() currently returns true.
+Do not implement role logic.
+
+Example:
+- can("game.create")
+- can("game.edit")
+- can("game.delete")
+
+If these actions do not exist yet in permission types, add them safely.
+
+8. Keep mock-only behavior.
+
+No API calls.
+No persistence required.
+No localStorage unless already used in the project.
+If you want to add localStorage, report it first as a recommendation, but do not implement it without confirmation.
+
+9. Quality checks.
+
+Run:
+- npm run typecheck
+- npm run build
+
+If lint exists, run:
+- npm run lint
+
+Fix TypeScript/build errors.
+
+Final response must include:
+- changed files
+- what was added
+- confirmation that UI was not redesigned
+- confirmation that no backend/database/auth/WooCommerce/orders/account CRUD/slot assignment was added
+- any risks or follow-up notes

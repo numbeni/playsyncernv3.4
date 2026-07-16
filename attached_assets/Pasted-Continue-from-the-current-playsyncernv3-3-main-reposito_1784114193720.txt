@@ -1,0 +1,219 @@
+Continue from the current playsyncernv3.3-main repository.
+
+This is PS-02A Finalization only.
+
+Do not restart PS-02A from scratch.
+Do not start PS-02B.
+Do not modify the Games frontend.
+
+Read first:
+
+- AGENTS.md
+- docs/PRODUCT_RULES.md
+- docs/CURRENT_PHASE.md
+- docs/DECISION_LOG.md
+- docs/MIGRATIONS.md
+
+The current v3.3 source already contains most PS-02A implementation. Inspect the existing code first and make only the minimal remaining corrections listed below.
+
+Before changing anything, run:
+
+git rev-parse HEAD
+
+Save it as START_HEAD.
+
+## 1. Close the remaining Game-platform concurrency gap
+
+The Games update route already uses a transaction and row lock, but Account creation may still read the Game platform before entering its creation transaction.
+
+Inspect the Account creation flow.
+
+Correct it so Account creation:
+
+- opens a database transaction before reading the Game
+- reads and locks the related Game row inside that same transaction
+- confirms the Game still exists and is not soft deleted
+- uses the platform from that locked Game row
+- creates the Account and automatic Capacity records inside the same transaction
+- never uses a platform value read outside the transaction
+
+The locking strategy must prevent Account creation and Game platform change from passing concurrently with inconsistent platform/capacity data.
+
+Do not redesign Accounts or Capacity templates.
+Do not add new Account features.
+This change is only for preserving the Games platform rule.
+
+Use a consistent lock order to avoid deadlocks:
+
+1. lock Game
+2. inspect/create Account data
+3. create Capacity records
+
+## 2. Add focused concurrency coverage
+
+Add focused tests proving the invariant:
+
+- an Account creation and an actual Game platform change cannot both succeed using inconsistent platform data
+- after either operation wins the lock, the other operation observes the committed state and behaves safely
+- no Account is created with Capacity definitions belonging to a stale Game platform
+- same-platform Game updates remain allowed
+- unrelated title/status Game updates remain allowed
+
+Use disposable PostgreSQL only.
+
+Do not touch the shared Replit database.
+
+If deterministic concurrent integration testing is difficult in the current test architecture, create a controlled transaction/locking test using two database connections and explicit synchronization points. Do not replace the required test with a superficial mock.
+
+## 3. Complete populated migration verification
+
+The migration already rejects cleaned legacy titles longer than 120 characters.
+
+Extend the populated-database migration verification so it explicitly tests:
+
+- a legacy Game title longer than 120 characters
+- migration failure
+- a clear diagnostic explaining the over-length Game title problem
+- no silent truncation, rename, merge, or deletion
+
+Keep the existing successful-upgrade and duplicate-title conflict cases.
+
+Do not modify migration 0000.
+
+Only modify migration 0001 if inspection proves the existing over-length validation itself is incomplete.
+
+## 4. Verify the final Games contract
+
+Confirm directly from source and tests:
+
+- platforms are exactly PS5_ONLY, PS4_ONLY, PS4_AND_PS5
+- statuses are exactly ACTIVE and INACTIVE
+- title normalization trims outer whitespace and collapses repeated internal whitespace
+- whitespace-only titles are rejected
+- cleaned titles must be 1–120 characters
+- normalized duplicate titles return HTTP 409
+- uniqueness applies to all Game rows, including soft-deleted rows
+- actual platform change is blocked after any Account history, including soft-deleted Accounts
+- unchanged platform values do not trigger the platform guard
+- hard deletion is blocked by any Account history
+- foreign-key deletion conflicts become HTTP 409
+- Order-history deletion protection remains deferred because the current schema has no reliable Order-to-Game relation
+
+Do not invent an Order relation in this phase.
+
+## 5. Final validation
+
+Run and report exact results for:
+
+- pnpm run typecheck
+- pnpm --filter @workspace/db run test
+- pnpm --filter @workspace/api-server run test
+- pnpm --filter @workspace/db run db:check
+- pnpm --filter @workspace/api-server run build
+- OpenAPI/codegen verification
+- clean disposable PostgreSQL migration-chain verification
+- populated database successful-upgrade verification
+- populated duplicate-title failure verification
+- populated over-length-title failure verification
+- concurrency/locking tests
+
+Also confirm:
+
+- migration 0000 is unchanged
+- no drizzle-kit push or push --force was run
+- no automatic drizzle push was reintroduced
+- the shared Replit database was not modified
+- Games frontend files were not modified
+- Account and Capacity changes were limited to the transaction/locking correction required for the Games invariant
+- no unrelated refactor or dependency was added
+- no sensitive values are logged
+
+## 6. Documentation and delivery cleanup
+
+Keep:
+
+docs/CURRENT_PHASE.md
+
+as:
+
+PS-02A — ACTIVE
+
+Do not mark PS-02A completed.
+
+Update exports/PS02A_DELIVERY.md so it accurately describes the final source:
+
+- full normalized-title unique index
+- populated migration safety
+- title length validation
+- transaction and locking behavior
+- final test counts
+- Order-history deletion protection deferred
+- shared database untouched
+
+Remove stale PS-02A delivery artifacts from the final export package.
+
+After implementation, run:
+
+git rev-parse HEAD
+
+Save it as END_HEAD.
+
+Run:
+
+git status --short
+
+Create one complete phase diff from the original PS-02A starting baseline when available.
+
+Prefer the original PS-02A START_HEAD already recorded in the repository/report.
+
+If that reference is unavailable, clearly report it and create the diff from the current START_HEAD of this finalization step instead.
+
+Generate:
+
+exports/ps02a-games-backend-final.diff
+
+Exclude export artifacts from the diff:
+
+git diff --binary <RESOLVED_START_HEAD>..END_HEAD -- . ':(exclude)exports/**' > exports/ps02a-games-backend-final.diff
+
+Create a complete clean source ZIP:
+
+exports/playsyncer-ps02a-final-full-source.zip
+
+The ZIP must contain the full current tracked project source and documentation.
+
+Exclude:
+
+- .git
+- node_modules
+- build outputs
+- caches
+- temporary PostgreSQL data
+- *.tsbuildinfo
+- attached prompt files
+- previous ZIP files
+- stale/intermediate diff files
+
+## Final response
+
+Provide:
+
+1. concise implementation summary
+2. START_HEAD
+3. END_HEAD
+4. git status --short
+5. files changed
+6. practical runtime changes
+7. documentation-only changes
+8. Account creation transaction and lock behavior
+9. concurrency test method and result
+10. migration verification results
+11. exact test/build results
+12. shared database impact
+13. remaining deferred items
+14. rollback instructions
+15. path and SHA-256 of exports/ps02a-games-backend-final.diff
+16. path and SHA-256 of exports/playsyncer-ps02a-final-full-source.zip
+
+Do not claim production readiness.
+Do not modify anything outside PS-02A finalization.

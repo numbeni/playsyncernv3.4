@@ -1,0 +1,384 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: games
+    description: Game management operations
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /readyz:
+    get:
+      operationId: readinessCheck
+      tags: [health]
+      summary: Readiness check
+      description: Returns whether the server can reach its dependencies (e.g. PostgreSQL)
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessStatus"
+        "503":
+          description: Not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessStatus"
+  /games:
+    get:
+      operationId: listGames
+      tags: [games]
+      summary: List all games
+      description: Returns all games, including inactive ones, with account counts.
+      responses:
+        "200":
+          description: Games list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GameListResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createGame
+      tags: [games]
+      summary: Create a game
+      description: Creates a new game with a normalized title. Duplicate normalized titles are rejected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGameRequest"
+      responses:
+        "201":
+          description: Game created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GameResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Duplicate normalized title
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /games/{id}:
+    get:
+      operationId: getGame
+      tags: [games]
+      summary: Get a single game
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Game found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GameResponse"
+        "400":
+          description: Invalid UUID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Game not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateGame
+      tags: [games]
+      summary: Update a game
+      description: |
+        Updates a game's title, cover URL, status, or platform.
+        Platform changes are blocked once accounts exist for the game.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateGameRequest"
+      responses:
+        "200":
+          description: Game updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GameResponse"
+        "400":
+          description: Invalid UUID or request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Game not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Duplicate normalized title or platform change blocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteGame
+      tags: [games]
+      summary: Delete a game
+      description: |
+        Hard-deletes a game when no account history exists.
+        Deletion is blocked when accounts reference the game.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Game deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          description: Invalid UUID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Game not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Game has account history and cannot be deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    ReadinessStatus:
+      type: object
+      properties:
+        status:
+          type: string
+        checks:
+          type: object
+          properties:
+            database:
+              type: string
+          required:
+            - database
+      required:
+        - status
+        - checks
+    GamePlatform:
+      type: string
+      enum:
+        - PS5_ONLY
+        - PS4_AND_PS5
+        - PS4_ONLY
+    GameStatus:
+      type: string
+      enum:
+        - ACTIVE
+        - INACTIVE
+    Game:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        titleNormalized:
+          type: string
+        coverUrl:
+          type: string
+          nullable: true
+        platform:
+          $ref: "#/components/schemas/GamePlatform"
+        status:
+          $ref: "#/components/schemas/GameStatus"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        deletedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - id
+        - title
+        - titleNormalized
+        - platform
+        - status
+        - createdAt
+        - updatedAt
+    GameListItem:
+      allOf:
+        - $ref: "#/components/schemas/Game"
+        - type: object
+          properties:
+            accountCount:
+              type: integer
+          required:
+            - accountCount
+    GameListResponse:
+      type: object
+      properties:
+        games:
+          type: array
+          items:
+            $ref: "#/components/schemas/GameListItem"
+      required:
+        - games
+    GameResponse:
+      type: object
+      properties:
+        game:
+          $ref: "#/components/schemas/Game"
+      required:
+        - game
+    CreateGameRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+          pattern: '^(?!\s*$).+$'
+          description: Game title. Must be 1-120 characters and cannot be whitespace-only.
+        coverUrl:
+          type: string
+          format: uri
+        platform:
+          $ref: "#/components/schemas/GamePlatform"
+        status:
+          $ref: "#/components/schemas/GameStatus"
+      required:
+        - title
+        - platform
+    UpdateGameRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+          pattern: '^(?!\s*$).+$'
+          description: Game title. Must be 1-120 characters and cannot be whitespace-only.
+        coverUrl:
+          type: string
+          format: uri
+          nullable: true
+        platform:
+          $ref: "#/components/schemas/GamePlatform"
+        status:
+          $ref: "#/components/schemas/GameStatus"
+    OkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+      required:
+        - ok
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        issues:
+          type: array
+          items:
+            type: object
+      required:
+        - error
