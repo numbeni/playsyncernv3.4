@@ -1,0 +1,382 @@
+Correct and complete only the remaining PS-03C0 evidence defects.
+
+This is still:
+
+PS-03C0 — Live Database Evidence and Migration Readiness
+
+The stage remains strictly read-only.
+
+Do not:
+
+- modify source files
+- modify documentation
+- create or edit migrations
+- modify the database
+- execute migrations
+- run drizzle-kit push
+- write implementation code
+- start Account CRUD
+- activate Secret Reveal
+- modify or extend capacity_customers
+- start Customer Assignment integration
+- start the next stage
+- automatically close PS-03C0
+
+Your task is only to complete and correct the sanitized evidence report for Command Center review.
+
+## 1. Prove read-only execution
+
+Re-run the required focused metadata queries inside an explicit read-only transaction:
+
+BEGIN TRANSACTION READ ONLY;
+
+SHOW transaction_read_only;
+
+The returned value must confirm:
+
+transaction_read_only = on
+
+Finish the evidence collection with:
+
+ROLLBACK;
+
+Include the sanitized terminal output proving:
+
+- the transaction was read-only
+- the transaction ended with ROLLBACK
+- no database writes or DDL occurred
+
+## 2. Correct the inconsistent index and constraint evidence
+
+Re-run focused live PostgreSQL catalog queries for:
+
+- indexes
+- primary keys
+- unique constraints
+- check constraints
+- foreign keys
+
+Resolve and explain these inconsistent results from the previous report:
+
+1. account_backup_codes_pkey was incorrectly shown as an index on public.accounts.
+
+It must be verified against the actual live table.
+
+2. The account_capacities primary key was incorrectly displayed using the foreign-key constraint name.
+
+Return the exact live values for:
+
+- schema name
+- table name
+- index or constraint name
+- constraint type
+- indexed columns
+- full definition
+
+Do not infer or manually rewrite the results.
+
+## 3. Verify live foreign-key actions directly
+
+Inspect the live database using pg_constraint or information_schema.referential_constraints.
+
+For every Account-related foreign key, return the actual live:
+
+- source table
+- source column
+- referenced table
+- referenced column
+- ON DELETE action
+- ON UPDATE action
+
+Do not use only the migration files as evidence.
+
+Explicitly inspect:
+
+- accounts → games
+- account_backup_codes → accounts
+- account_capacities → accounts
+- capacity_customers → account_capacities
+- capacity_customers → orders
+
+## 4. Provide repository migration hash evidence
+
+Run and include sanitized terminal output for:
+
+sha256sum lib/db/migrations/0000_zippy_leech.sql
+sha256sum lib/db/migrations/0001_glossy_onslaught.sql
+
+Compare those exact hashes with the values stored in:
+
+drizzle.__drizzle_migrations
+
+Report:
+
+- repository filename
+- repository SHA-256
+- applied migration id
+- applied migration hash
+- exact match: yes/no
+
+Do not expose DATABASE_URL or any credentials.
+
+## 5. Preserve the approved Account identifier decision
+
+The approved Account identifier model is:
+
+1. One global Account code, for example:
+
+ACC-000001
+
+2. One per-game display number, for example:
+
+GOW-001
+
+Both identifiers:
+
+- are created once
+- are immutable after Account creation
+- must never be reused, including after Account deletion
+- must use concurrency-safe allocation
+- must not use MAX + 1
+
+Do not propose random identifiers, UUID-based display identifiers, or a different product format.
+
+The migration-readiness report may identify the need for:
+
+- a global non-reusing sequence/counter
+- a concurrency-safe per-game sequence/counter
+- unique constraints for global and per-game identifiers
+- protection against identifier updates
+
+Do not implement them in PS-03C0.
+
+## 6. Use the finalized Account status rules
+
+The authoritative effective Account status rules are now:
+
+### INACTIVE
+
+INACTIVE is a manual persisted override.
+
+It has the highest priority.
+
+When the Account is manually INACTIVE, its effective status remains INACTIVE regardless of Capacity states.
+
+### SOLD
+
+SOLD can occur in two ways:
+
+1. The Account has a manual persisted SOLD override.
+2. All Capacities belonging to the Account are FINISHED.
+
+When all Capacities are FINISHED, the effective Account status automatically becomes SOLD.
+
+If the automatic SOLD state was caused only by all Capacities being FINISHED, and one Capacity is later changed from FINISHED to another state, the Account must automatically leave SOLD and be recalculated.
+
+It remains SOLD only when a manual SOLD override also exists.
+
+### AVAILABLE
+
+The effective Account status is AVAILABLE only when all of its Capacities are AVAILABLE.
+
+### PARTIALLY_SOLD
+
+The effective Account status is PARTIALLY_SOLD when:
+
+- at least one Capacity is ASSIGNED or FINISHED
+- not all Capacities are FINISHED
+- there is no manual SOLD override
+- there is no manual INACTIVE override
+
+Examples:
+
+AVAILABLE + AVAILABLE + AVAILABLE
+→ AVAILABLE
+
+AVAILABLE + ASSIGNED + AVAILABLE
+→ PARTIALLY_SOLD
+
+AVAILABLE + FINISHED + AVAILABLE
+→ PARTIALLY_SOLD
+
+ASSIGNED + ASSIGNED + ASSIGNED
+→ PARTIALLY_SOLD
+
+FINISHED + FINISHED + FINISHED
+→ SOLD automatically
+
+These rules are authoritative for migration readiness.
+
+FINISHED is a Capacity state, not a persisted Account status.
+
+The persisted Account override must contain only:
+
+- SOLD
+- INACTIVE
+- NULL when no manual override exists
+
+Do not propose persisting AVAILABLE or PARTIALLY_SOLD in the Account override field.
+
+Customer Assignment implementation remains outside Account Core. In PS-03C0, record only the schema and dependency implications of ASSIGNED state. Do not implement or redesign Assignment.
+
+## 7. Correct the migration-readiness sequence
+
+Do not recommend putting the complete Account contract transition into one large migration.
+
+Use this controlled sequence:
+
+### Stage A — Additive Foundation
+
+Propose only additive structures such as:
+
+- new encrypted-value columns
+- separate keyed lookup-hash columns
+- nullable SOLD/INACTIVE manual override
+- Backup Code lifecycle fields
+- Capacity FINISHED fields
+- Shared Z3 representation
+- concurrency-safe identifier allocation structures
+- required non-unique lookup indexes
+- required identifier unique constraints
+
+Legacy columns must remain temporarily.
+
+### Stage B — Runtime Cutover and Constraint Enforcement
+
+Future stage only:
+
+- move read/write paths to the new contract
+- enforce encryption and lookup hashes
+- enforce immutable identifiers
+- enforce Account creation requirements
+- activate safe DTO boundaries
+- verify OpenAPI and generated-client parity
+
+Do not perform this work now.
+
+### Stage C — Legacy Cleanup
+
+Future stage only and only after runtime evidence:
+
+- remove legacy plaintext columns
+- remove obsolete status fields
+- remove obsolete indexes
+- remove obsolete enum values
+- remove deprecated write paths
+
+Do not perform this work now.
+
+## 8. Preserve duplicate-field behavior
+
+Duplicate PSN Email, Online ID and Family Management Email are allowed.
+
+Lookup hashes for these duplicate-permitted fields must use non-unique indexes.
+
+The system must later:
+
+- detect an exact duplicate using keyed lookup hashes
+- return a warning
+- require explicit confirmation
+- allow the operation after authorized confirmation
+
+Do not recommend UNIQUE lookup-hash indexes for these fields.
+
+The current unique email_normalized index must be reported as incompatible with the approved contract.
+
+Do not remove it during PS-03C0.
+
+## 9. Preserve the encryption scope
+
+The approved encryption scope includes:
+
+- PSN Email
+- PSN Password
+- Email Password
+- Family Management Email
+- Backup Codes
+- Customer Phone
+
+Encrypted values and keyed lookup hashes are separate fields with separate purposes.
+
+Do not store searchable plaintext credentials.
+
+Customer Phone remains a security obligation, but Customer Assignment is outside Account Core.
+
+Therefore:
+
+- do not modify capacity_customers
+- do not promote capacity_customers into the canonical contract
+- record Customer Phone encryption and keyed lookup migration as deferred to the approved Assignment stage
+
+## 10. Preserve Backup Code requirements
+
+The migration-readiness report must include:
+
+- encrypted Backup Code value
+- separate keyed lookup hash
+- AVAILABLE / USED / REVOKED lifecycle
+- at least one Backup Code required during Account creation
+- no Backup Codes in generic Account DTOs
+- no Runtime Reveal before Authentication, RBAC, permission checks and actor-based Audit Logging exist
+
+Do not implement these requirements now.
+
+## 11. Preserve Capacity rules
+
+The current Z3_PS5 value does not satisfy the approved shared Z3 contract.
+
+The canonical Capacity concept is:
+
+Z3_SHARED_PS5_PS4
+
+PS4_ONLY Accounts must also receive the Shared Z3 Capacity.
+
+FINISHED must be:
+
+- persisted on the Capacity
+- manually controlled
+- reversible
+- included in the Account effective-status calculation
+- unavailable for new assignment
+
+Do not modify the Capacity schema in PS-03C0.
+
+## 12. Environment conclusion limitation
+
+Report only what the collected evidence proves.
+
+You may state:
+
+- the database reached by the active Replit workspace DATABASE_URL was inspected
+- PostgreSQL metadata and database identity were collected
+
+Do not claim that the database is definitely separate from every deployment unless Replit environment evidence directly proves that.
+
+## 13. Final response format
+
+Return a concise but complete supplemental PS-03C0 evidence report containing:
+
+1. Read-only transaction evidence
+2. Corrected index and constraint evidence
+3. Live foreign-key action evidence
+4. Repository versus applied migration hash evidence
+5. Confirmed database row-count conclusion
+6. Corrected identifier-readiness decision
+7. Finalized Account effective-status rules
+8. Corrected phased migration-readiness recommendation
+9. Remaining blockers
+10. Final PS-03C0 recommendation
+
+You may reference the previously submitted column and enum evidence instead of repeating the complete large JSON.
+
+The response must not be truncated.
+
+If necessary, save the complete sanitized report as a Markdown or TXT file and provide its path, while also returning a concise summary in the chat.
+
+Final status must remain:
+
+PS-03C0 — AWAITING COMMAND CENTER REVIEW
+
+Do not close PS-03C0 automatically.
+
+Stop after returning the corrected evidence.
