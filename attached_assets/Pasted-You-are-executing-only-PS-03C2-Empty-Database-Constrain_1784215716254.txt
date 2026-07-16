@@ -1,0 +1,359 @@
+You are executing only:
+
+PS-03C2 — Empty-Database Constraint Lock and Legacy Schema Retirement
+
+PS-03C1 is APPROVED AND CLOSED.
+
+The goal is to finalize the Account Core database contract before any Runtime Account writes are authorized.
+
+## Approved migration baseline
+
+0000 SHA-256:
+a43ab14cacf73a107d5c115c2025dc56de3537efe4d409ca65c79e48a8aa07ca
+
+0001 SHA-256:
+c09f28b3895fa3ee2732f42438d55e4ad136a02d485386bfe001c4530d14c4c2
+
+0002 SHA-256:
+99f124e4bb93a8763d485813a65355c44e4a0aa4a1a6b4eb8ddffc47e3059b6a
+
+Never modify, remove, regenerate or reapply migrations 0000, 0001 or 0002.
+
+Create exactly one new forward migration:
+
+lib/db/migrations/0003_<generated_name>.sql
+
+Do not use drizzle-kit push.
+
+---
+
+# Strict scope
+
+Allowed:
+
+- Account Core Drizzle schema changes
+- migration 0003
+- Drizzle snapshot and journal updates
+- isolated migration tests
+- disposable rollback validation
+- live application after all checks pass
+- evidence reports
+
+Forbidden:
+
+- Backend Account CRUD
+- OpenAPI
+- generated clients
+- frontend integration
+- Secret Reveal
+- Authentication or RBAC
+- Customer Assignment
+- Runtime Account writes
+- Runtime source changes
+- dependency additions
+- modifications to capacity_customers
+
+Do not modify:
+
+- artifacts/api-server
+- artifacts/playsyncer
+- lib/api-spec
+- lib/api-client-react
+- lib/api-zod
+- capacity_customers schema
+- migrations 0000, 0001 or 0002
+
+---
+
+# 1. Live preflight
+
+Before changing files, run an explicit read-only live database check:
+
+BEGIN TRANSACTION READ ONLY;
+
+Confirm:
+
+- transaction_read_only = on
+- migrations 0000, 0001 and 0002 exist once with the approved hashes
+- migration 0003 does not exist
+- all these tables contain zero rows:
+
+  - games
+  - accounts
+  - account_backup_codes
+  - account_capacities
+  - capacity_customers
+  - orders
+  - game_account_sequences
+
+Finish with:
+
+ROLLBACK;
+
+If any table contains data or any migration hash differs, stop and report:
+
+PS-03C2 — BLOCKED, AWAITING COMMAND CENTER DECISION
+
+---
+
+# 2. Finalize Account Core schema
+
+Because the Account-related tables are empty, migration 0003 may retire obsolete schema paths.
+
+## Accounts
+
+Remove obsolete legacy fields and indexes for:
+
+- plaintext PSN Email
+- normalized plaintext Email
+- legacy password/email/family fields replaced by 0002 ciphertext columns
+- legacy active/disabled Account status
+- obsolete normalized-email unique index
+
+The following index must be removed:
+
+accounts_email_normalized_active_uniq
+
+Duplicate PSN Email, Family Management Email and Online ID values are allowed. Their lookup indexes must remain non-unique.
+
+Finalize one canonical pair for each sensitive field:
+
+- PSN Email ciphertext + keyed lookup hash
+- PSN Password ciphertext + keyed lookup hash
+- Email Password ciphertext + keyed lookup hash
+- Family Management Email ciphertext + keyed lookup hash
+
+These canonical fields must be:
+
+- NOT NULL
+- not blank
+- separately indexed where exact lookup is needed
+
+Do not add searchable plaintext credentials.
+
+Finalize required Account fields:
+
+- game_id
+- account_code
+- account_number_prefix
+- account_number_seq
+- display_number
+- all approved ciphertext and lookup-hash fields
+- online_id
+- normalized Online ID
+- birth_date
+
+Manual status override remains nullable and may contain only:
+
+- SOLD
+- INACTIVE
+- NULL
+
+AVAILABLE and PARTIALLY_SOLD must not be stored.
+
+Require:
+
+- account_number_seq > 0
+- required text/hash/ciphertext fields are not blank
+- duplicate normalized Online IDs remain allowed
+
+Approved formats remain:
+
+- ACC-000001
+- GOW-001
+
+## Backup Codes
+
+Keep one canonical path only:
+
+- ciphertext
+- keyed lookup hash
+- status
+- used_at
+
+Status values:
+
+- AVAILABLE
+- USED
+- REVOKED
+
+Require:
+
+- ciphertext and lookup hash are NOT NULL and not blank
+- default status is AVAILABLE
+- USED requires used_at
+- AVAILABLE and REVOKED require used_at to be NULL
+
+Do not implement Reveal or “at least one Backup Code” service logic.
+
+## Capacities
+
+Retire the legacy Capacity-kind path containing Z3_PS5.
+
+The final Capacity kinds must be only:
+
+- Z2_PS5
+- Z2_PS4
+- Z3_SHARED_PS5_PS4
+
+Finalize one canonical Capacity-kind column and unique slot constraint:
+
+(account_id, capacity_kind, instance_no)
+
+Require:
+
+- instance_no > 0
+- Z2_PS5 permits instances 1 and 2
+- Z2_PS4 permits instance 1
+- Z3_SHARED_PS5_PS4 permits instance 1
+
+Finalize FINISHED consistency:
+
+- is_finished is NOT NULL with default false
+- is_finished = false requires finished_at IS NULL
+- is_finished = true requires finished_at IS NOT NULL
+
+Do not create Capacity records or Runtime templates.
+
+## Identifiers and counters
+
+Preserve and finalize:
+
+- global account-code sequence
+- per-game counter table
+- account_code uniqueness
+- unique (game_id, account_number_seq)
+- unique (game_id, display_number)
+- Account identifier immutability trigger
+
+Require:
+
+- counter last_value is NOT NULL and non-negative
+- no sequence or counter reuse
+- no MAX + 1
+- counter foreign key uses NO ACTION
+- no live counter rows are created
+
+## Customer Assignment boundary
+
+Do not modify capacity_customers or any Customer Phone, Order or Assignment object.
+
+---
+
+# 3. Migration and isolated testing
+
+Generate migration 0003 through the existing Drizzle workflow.
+
+Test on an isolated disposable PostgreSQL database:
+
+1. Apply 0000
+2. Apply 0001
+3. Apply 0002
+4. Apply 0003
+5. Verify all four migration hashes directly from drizzle.__drizzle_migrations
+6. Verify the final schema
+
+Required test coverage:
+
+- retired plaintext and legacy fields no longer exist
+- old normalized-email unique index no longer exists
+- required canonical fields reject NULL and blank values
+- duplicate lookup hashes and normalized Online IDs remain allowed
+- Account override accepts only SOLD, INACTIVE or NULL
+- Backup Code lifecycle constraints work
+- Shared Z3 and Capacity instance constraints work
+- FINISHED consistency works
+- identifier uniqueness and immutability work
+- global and per-game allocation remain concurrency-safe and non-reusing
+- capacity_customers remains unchanged
+
+Use only synthetic non-sensitive test values.
+
+Run:
+
+- pnpm run typecheck
+- pnpm --filter @workspace/db run db:check
+- pnpm --filter @workspace/db run test
+- pnpm --filter @workspace/db run test:migrations
+
+If finalizing the Drizzle schema breaks Runtime TypeScript code and fixing it requires Runtime changes, stop before applying 0003 and report:
+
+PS-03C2 — BLOCKED BY RUNTIME SCHEMA COUPLING
+
+Do not patch Runtime code.
+
+---
+
+# 4. Disposable rollback
+
+Create:
+
+reports/ps03c2_rollback.sql
+
+The rollback is for disposable databases only.
+
+Validate that:
+
+- post-0002 schema is captured
+- 0003 is applied
+- rollback is executed
+- schema returns exactly to the post-0002 state
+- capacity_customers remains unchanged
+
+Never execute this rollback on the live database.
+
+After live application, any correction must use a new forward migration.
+
+---
+
+# 5. Live application
+
+Only after all isolated tests and rollback validation pass:
+
+- reconfirm live tables are empty
+- reconfirm 0000, 0001 and 0002 hashes
+- apply only migration 0003 using the repository migration runner
+- do not use drizzle-kit push
+- do not insert test data
+
+Then perform a read-only live verification confirming:
+
+- migrations 0000 through 0003 each exist once
+- all hashes match repository files
+- final Account Core schema and constraints exist
+- obsolete plaintext and legacy paths are gone
+- capacity_customers is unchanged
+- all Account-related tables remain empty
+
+Finish with ROLLBACK.
+
+---
+
+# 6. Required artifacts and report
+
+Create:
+
+- reports/ps03c2_implementation_report.md
+- reports/ps03c2_rollback.sql
+- reports/ps03c2_full_baseline.diff
+
+The final report must include:
+
+- exact changed-file list
+- migration 0003 filename and SHA-256
+- confirmation 0000, 0001 and 0002 were not modified
+- removed legacy schema objects
+- final canonical schema objects
+- exact test commands and results
+- disposable migration and rollback evidence
+- live migration history and row counts
+- confirmation capacity_customers was unchanged
+- confirmation no Runtime/API/Frontend work occurred
+
+Final status:
+
+PS-03C2 — IMPLEMENTED, AWAITING COMMAND CENTER REVIEW
+
+Do not approve or close PS-03C2 automatically.
+
+Stop after returning the evidence report and artifacts.
